@@ -1,0 +1,33 @@
+{
+  "fps": 30,
+  "segments": [
+    {
+      "id": "title",
+      "start": 0,
+      "dur": 4.0137
+    },
+    {
+      "id": "projectile",
+      "start": 4.0137,
+      "dur": 9.7538
+    },
+    {
+      "id": "spring",
+      "start": 13.7675,
+      "dur": 9.8693
+    },
+    {
+      "id": "circular",
+      "start": 23.6368,
+      "dur": 9.1953
+    },
+    {
+      "id": "outro",
+      "start": 32.8321,
+      "dur": 9.1927
+    }
+  ],
+  "total": 42.0248,
+  "totalFrames": 1261,
+  "output": "/Users/chouchou/开发/EasyUse/tmp/h5light/examples/物理动态演示/out/video.mp4"
+}

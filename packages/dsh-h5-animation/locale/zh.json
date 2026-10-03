@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "H5 动画视频（h5-animation）",
+    "description": "挂载 h5-animation-video skill、注册 h5video 原生工具，并提供「H5 动画视频」agent preset（两阶段闸门：先分镜审核，后逐帧出片）"
+  }
+}

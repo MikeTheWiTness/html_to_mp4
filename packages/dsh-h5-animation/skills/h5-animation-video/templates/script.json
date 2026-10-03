@@ -1,0 +1,18 @@
+{
+  "fps": 30,
+  "width": 1280,
+  "height": 720,
+  "voice": "Tingting",
+  "rate": 178,
+  "cps": 4.5,
+  "lead": 0.35,
+  "tail": 0.6,
+  "minDur": 2.4,
+  "output": "video.mp4",
+  "segments": [
+    { "id": "title", "text": "这是一段由网页动画生成的视频。" },
+    { "id": "bars", "text": "画面里的数据会随着时间生长，旁白读到哪一句，对应的柱子就长到哪一刻。" },
+    { "id": "steps", "text": "整个流程只有三步：写画面、配旁白、导出视频。" },
+    { "id": "outro", "text": "画面、公式和旁白同步生成，导出为 MP4，就可以直接分享。" }
+  ]
+}

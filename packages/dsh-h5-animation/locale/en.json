@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "H5 animation video (h5-animation)",
+    "description": "Mounts the h5-animation-video skill, registers the h5video native tool, and declares an H5 animation video agent preset (two gated phases: storyboard review first, frame-accurate encode second)"
+  }
+}

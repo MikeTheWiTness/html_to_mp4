@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>H5 动画模板</title>
+<link rel="stylesheet" href="vendor/katex/katex-inline.css">
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#ffffff;overflow:hidden}
+  #stage{position:relative;width:1280px;height:720px}
+  canvas{display:block;width:1280px;height:720px}
+  #math{position:absolute;left:0;top:0;width:1280px;height:720px;pointer-events:none}
+  #math .f{position:absolute;left:0;top:0;opacity:0;white-space:nowrap;will-change:opacity,transform}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv" width="1280" height="720"></canvas>
+  <div id="math"></div>
+</div>
+<script src="vendor/katex/katex.min.js"></script>
+<script>
+/* ===========================================================================
+ * H5 动画模板  ——  把这个文件当成一块画布
+ *
+ * 契约（构建脚本靠这三样东西驱动，别删）：
+ *   window.__VM       时间轴，由 build.mjs / storyboard.cjs 注入
+ *   window.__seek(t)  把画面确定性渲染到第 t 秒并停掉 rAF（供逐帧截图）
+ *   window.__ready    渲染函数就绪标志
+ *
+ * 两层结构：
+ *   下层 <canvas>  画图形（轨迹、矢量、曲线、卡片……）
+ *   上层 #math     **所有物理量与公式都用 LaTeX 渲染**（KaTeX），位置逐帧同步
+ *   中文标题、说明文字留在 canvas 上（KaTeX 字体不含中文字形）
+ *
+ * 加公式只需 math({...}) 一条：tex 写 LaTeX，place() 返回每帧的位置与透明度。
+ * =========================================================================== */
+(function () {
+  var FONT = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif';
+  var TAU = Math.PI * 2;
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var W = 1280, H = 720;
+
+  var VM = window.__VM || { fps: 30, segments: [
+    { id: 'title', start: 0, dur: 5 },
+    { id: 'bars', start: 5, dur: 8 },
+    { id: 'steps', start: 13, dur: 8 },
+    { id: 'outro', start: 21, dur: 6 }
+  ]};
+  var SEG = VM.segments;
+  var TOTAL = SEG[SEG.length - 1].start + SEG[SEG.length - 1].dur;
+  var FADE = 0.5;
+
+  /* ---------- 通用工具 ---------- */
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function ease(p) { p = clamp(p, 0, 1); return 1 - Math.pow(1 - p, 3); }
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function panel(x, y, w, h, a) {
+    rr(x, y, w, h, 18);
+    ctx.save();
+    ctx.shadowColor = 'rgba(15,23,42,' + (0.10 * a) + ')';
+    ctx.shadowBlur = 22; ctx.shadowOffsetY = 7;
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.95 * a) + ')';
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(15,23,42,' + (0.12 * a) + ')';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  function text(s, x, y, font, color, align, baseline) {
+    ctx.font = font; ctx.fillStyle = color;
+    ctx.textAlign = align || 'left'; ctx.textBaseline = baseline || 'alphabetic';
+    ctx.fillText(s, x, y);
+  }
+  function arrow(x1, y1, x2, y2, color, width) {
+    var ang = Math.atan2(y2 - y1, x2 - x1), hl = 11 + width * 1.8;
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = width;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - hl * Math.cos(ang - 0.42), y2 - hl * Math.sin(ang - 0.42));
+    ctx.lineTo(x2 - hl * Math.cos(ang + 0.42), y2 - hl * Math.sin(ang + 0.42));
+    ctx.closePath(); ctx.fill();
+  }
+  function dashLine(x1, y1, x2, y2, color, w, d) {
+    ctx.save(); ctx.setLineDash(d || [7, 7]);
+    ctx.strokeStyle = color; ctx.lineWidth = w || 1;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
+  }
+
+  /* ===================== LaTeX 公式层（物理量 & 公式都在这里） =====================
+   * math({ id, seg, tex, size, color, anchor, at, place })
+   *   seg     哪个场景显示
+   *   tex     LaTeX 源码，例如 'y = \\frac{1}{2} g t^2'
+   *   at      进场时间（场景内秒数），默认 0.15
+   *   place   function (lt, dur) -> { x, y, a, anchor }
+   *           x/y 是公式盒子在 1280x720 里的位置；a 是透明度（0~1）
+   * 每个公式都逐帧同步位置与透明度，所以可以挂在运动的矢量上。 */
+  var MATH = [];
+  function math(spec) { MATH.push(spec); return spec; }
+  function appear(lt, at, d) { return ease((lt - (at === undefined ? 0.15 : at)) / (d || 0.45)); }
+
+  function buildMath() {
+    var host = document.getElementById('math');
+    var ok = (typeof katex !== 'undefined');
+    MATH.forEach(function (f) {
+      var el = document.createElement('div');
+      el.className = 'f';
+      el.style.fontSize = (f.size || 30) + 'px';
+      if (f.color) el.style.color = f.color;
+      if (ok) {
+        try { katex.render(f.tex, el, { throwOnError: false, displayMode: false }); }
+        catch (e) { el.textContent = f.tex; }
+      } else {
+        el.style.fontFamily = 'Georgia,serif';
+        el.textContent = f.tex;
+      }
+      host.appendChild(el);
+      f.el = el;
+    });
+  }
+
+  function syncMath(t, idx, lt, prevIdx) {
+    for (var i = 0; i < MATH.length; i++) {
+      var f = MATH[i], pos = null, a = 0;
+      if (f.seg === SEG[idx].id) {
+        pos = f.place(lt, SEG[idx].dur);
+        a = (pos.a === undefined ? 1 : pos.a) * (idx > 0 && lt < FADE ? lt / FADE : 1);
+      } else if (prevIdx >= 0 && f.seg === SEG[prevIdx].id) {
+        pos = f.place(SEG[prevIdx].dur, SEG[prevIdx].dur);
+        a = (pos.a === undefined ? 1 : pos.a);
+      }
+      f.el.style.opacity = a;
+      if (pos) {
+        var anchor = pos.anchor || f.anchor || 'left';
+        f.el.style.transform = 'translate(' + pos.x + 'px,' + pos.y + 'px) translate(' +
+          (anchor === 'center' ? '-50%' : '0') + ',-50%)';
+      }
+    }
+  }
+
+  /* ---------- 背景：纯白 + 细网格 ---------- */
+  function bg(t) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(100,116,139,0.10)';
+    ctx.lineWidth = 1;
+    for (var x = 0; x <= W; x += 64) { ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); ctx.stroke(); }
+    for (var y = 0; y <= H; y += 64) { ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5); ctx.stroke(); }
+  }
+
+  /* ======================== 场景 1：标题 ======================== */
+  function sceneTitle(lt, dur) {
+    var p = ease(lt / 0.9);
+    text('H T M L   ·   A N I M A T I O N', W / 2, 236, '600 20px ' + FONT, 'rgba(37,99,235,' + (0.95 * p) + ')', 'center');
+
+    var tg = ctx.createLinearGradient(W / 2 - 400, 0, W / 2 + 400, 0);
+    tg.addColorStop(0, '#0f172a'); tg.addColorStop(0.5, '#2563eb'); tg.addColorStop(1, '#0f172a');
+    ctx.save();
+    ctx.globalAlpha = p;
+    text('从网页到视频', W / 2, 352, '700 78px ' + FONT, tg, 'center');
+    ctx.restore();
+
+    var lw = 520 * ease((lt - 0.35) / 0.8);
+    var lg = ctx.createLinearGradient(W / 2 - lw / 2, 0, W / 2 + lw / 2, 0);
+    lg.addColorStop(0, 'rgba(37,99,235,0)'); lg.addColorStop(0.5, 'rgba(37,99,235,1)'); lg.addColorStop(1, 'rgba(249,115,22,0)');
+    ctx.fillStyle = lg; ctx.fillRect(W / 2 - lw / 2, 388, lw, 4);
+
+    text('HTML 动画  →  逐帧录制  →  MP4 + 中文旁白', W / 2, 446, '400 25px ' + FONT,
+      'rgba(51,65,85,' + (0.9 * ease((lt - 0.6) / 0.9)) + ')', 'center');
+  }
+
+  /* ======================== 场景 2：动态柱状图 ======================== */
+  var DATA = [
+    ['项目一', 0.82], ['项目二', 0.64], ['项目三', 0.91], ['项目四', 0.47], ['项目五', 0.73]
+  ];
+  // 公式示例：换成你自己的式子即可，LaTeX 原样写。
+  math({
+    id: 'bars-mean', seg: 'bars', tex: '\\bar{x} = \\dfrac{1}{n}\\sum_{i=1}^{n} x_i', size: 34,
+    place: function (lt) { return { x: 900, y: 176, a: appear(lt, 1.6) }; }
+  });
+  function sceneBars(lt, dur) {
+    var ox = 200, oy = 620, gw = 880, gh = 400;
+    var te = ease(lt / 0.6);
+    text('数据概览', 160, 150, '700 38px ' + FONT, 'rgba(15,23,42,' + te + ')');
+    ctx.fillStyle = 'rgba(37,99,235,' + (0.8 * te) + ')';
+    ctx.fillRect(160, 166, 120, 3);
+    text('样本均值', 160, 214, '400 18px ' + FONT, 'rgba(100,116,139,' + te + ')');
+
+    dashLine(160, oy, ox + gw, oy, 'rgba(100,116,139,0.5)', 1.4);
+    dashLine(ox, oy + 20, ox, oy - gh, 'rgba(100,116,139,0.5)', 1.4);
+
+    var bw = 110, gap = (gw - DATA.length * bw) / (DATA.length + 1);
+    for (var i = 0; i < DATA.length; i++) {
+      var bp = ease((lt - 0.3 - i * 0.5) / 1.5);
+      var x = ox + gap + i * (bw + gap);
+      var h = gh * DATA[i][1] * bp;
+      var cg = ctx.createLinearGradient(0, oy - h, 0, oy);
+      cg.addColorStop(0, '#2563eb');
+      cg.addColorStop(1, '#93c5fd');
+      ctx.fillStyle = cg;
+      rr(x, oy - h, bw, h, 8); ctx.fill();
+      if (bp > 0.98) {
+        var va = ease((lt - 0.3 - i * 0.5 - 1.5) / 0.4);
+        text(Math.round(DATA[i][1] * 100) + '%', x + bw / 2, oy - h - 16,
+          '700 26px ' + FONT, 'rgba(15,23,42,' + va + ')', 'center');
+      }
+      text(DATA[i][0], x + bw / 2, oy + 34, '400 20px ' + FONT,
+        'rgba(100,116,139,' + te + ')', 'center');
+    }
+  }
+
+  /* ======================== 场景 3：三步流程 ======================== */
+  function sceneSteps(lt, dur) {
+    text('三步走完', W / 2, 168, '700 46px ' + FONT,
+      'rgba(15,23,42,' + ease(lt / 0.7) + ')', 'center');
+    var cards = [
+      ['1', '写画面', '一个 HTML 就是一块画布'],
+      ['2', '配旁白', '一句文案对应一段画面'],
+      ['3', '导视频', '逐帧录制后编码为 MP4']
+    ];
+    var cw = 330, ch = 210, gap = 55;
+    var total = cards.length * cw + (cards.length - 1) * gap;
+    var x0 = W / 2 - total / 2, y0 = 262;
+    for (var i = 0; i < cards.length; i++) {
+      var ap = ease((lt - 0.45 - i * 0.65) / 0.6);
+      if (ap <= 0.001) continue;
+      var x = x0 + i * (cw + gap), y = y0 + (1 - ap) * 26;
+      rr(x, y, cw, ch, 20);
+      ctx.save();
+      ctx.shadowColor = 'rgba(15,23,42,' + (0.09 * ap) + ')';
+      ctx.shadowBlur = 18; ctx.shadowOffsetY = 6;
+      ctx.fillStyle = 'rgba(255,255,255,' + (0.99 * ap) + ')';
+      ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(37,99,235,' + (0.42 * ap) + ')';
+      ctx.lineWidth = 1.6; ctx.stroke();
+
+      ctx.fillStyle = 'rgba(37,99,235,' + (0.95 * ap) + ')';
+      ctx.beginPath(); ctx.arc(x + 46, y + 52, 21, 0, TAU); ctx.fill();
+      text(cards[i][0], x + 46, y + 53, '700 24px ' + FONT, '#ffffff', 'center', 'middle');
+      text(cards[i][1], x + 82, y + 62, '700 27px ' + FONT, 'rgba(15,23,42,' + ap + ')');
+      text(cards[i][2], x + 30, y + 130, '400 17px ' + FONT, 'rgba(100,116,139,' + ap + ')');
+      ctx.fillStyle = 'rgba(37,99,235,' + (0.7 * ap) + ')';
+      ctx.fillRect(x + 30, y + 152, 70, 3);
+
+      if (i < cards.length - 1) {
+        var aa = ease((lt - 0.9 - i * 0.65) / 0.5);
+        if (aa > 0.001) text('→', x + cw + gap / 2, y0 + ch / 2 + 8, '700 34px ' + FONT,
+          'rgba(100,116,139,' + (0.85 * aa) + ')', 'center', 'middle');
+      }
+    }
+  }
+
+  /* ======================== 场景 4：结尾 ======================== */
+  function sceneOutro(lt, dur) {
+    text('导出 MP4', W / 2, 300, '700 60px ' + FONT,
+      'rgba(15,23,42,' + ease(lt / 0.7) + ')', 'center');
+    var ba = ease((lt - 0.8) / 0.7);
+    if (ba > 0.001) {
+      var bw = 760, bh = 78, bx = W / 2 - bw / 2, by = 390 + (1 - ba) * 18;
+      rr(bx, by, bw, bh, 39);
+      ctx.fillStyle = 'rgba(37,99,235,' + (0.08 * ba) + ')'; ctx.fill();
+      var bgd = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+      bgd.addColorStop(0, 'rgba(37,99,235,' + (0.15 * ba) + ')');
+      bgd.addColorStop(0.5, 'rgba(37,99,235,' + (0.85 * ba) + ')');
+      bgd.addColorStop(1, 'rgba(249,115,22,' + (0.5 * ba) + ')');
+      ctx.strokeStyle = bgd; ctx.lineWidth = 2; ctx.stroke();
+      text('旁白与画面同步  ·  可直接用于课堂与分享', W / 2, by + bh / 2 + 1,
+        '500 25px ' + FONT, 'rgba(15,23,42,' + ba + ')', 'center', 'middle');
+    }
+  }
+
+  var SCENES = { title: sceneTitle, bars: sceneBars, steps: sceneSteps, outro: sceneOutro };
+
+  /* ---------- 渲染：背景 + 交叉淡入 + 当前场景 + 公式层 + 进度条 ---------- */
+  function render(t) {
+    t = ((t % TOTAL) + TOTAL) % TOTAL;
+    bg(t);
+    var idx = 0;
+    for (var i = 0; i < SEG.length; i++) { if (t >= SEG[i].start) idx = i; }
+    var s = SEG[idx], lt = t - s.start;
+    var prevIdx = -1;
+    if (idx > 0 && lt < FADE) {
+      prevIdx = idx - 1;
+      ctx.globalAlpha = 1;
+      SCENES[SEG[prevIdx].id](SEG[prevIdx].dur, SEG[prevIdx].dur);
+      ctx.globalAlpha = lt / FADE;
+    } else {
+      ctx.globalAlpha = 1;
+    }
+    SCENES[s.id](lt, s.dur);
+    ctx.globalAlpha = 1;
+    syncMath(t, idx, lt, prevIdx);
+
+    ctx.fillStyle = 'rgba(15,23,42,0.10)';
+    ctx.fillRect(0, H - 5, W, 3);
+    var pw = Math.max(W * (t / TOTAL), 1);
+    var pg = ctx.createLinearGradient(0, 0, pw, 0);
+    pg.addColorStop(0, '#2563eb'); pg.addColorStop(1, '#60a5fa');
+    ctx.fillStyle = pg;
+    ctx.fillRect(0, H - 5, pw, 3);
+  }
+
+  buildMath();
+  var raf = null, t0 = null;
+  function loop(ts) {
+    if (t0 === null) t0 = ts;
+    render((ts - t0) / 1000);
+    raf = requestAnimationFrame(loop);
+  }
+  window.__seek = function (t) {
+    if (raf !== null) { cancelAnimationFrame(raf); raf = null; }
+    render(t);
+  };
+  window.__meta = { total: TOTAL, segments: SEG };
+  window.__ready = true;
+  render(0);
+  raf = requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

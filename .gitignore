@@ -1,0 +1,18 @@
+# 平台静态二进制：体积大（100MB+）且必须与本机架构匹配，用脚本按需获取
+#   macOS / Linux : tools/install-tools.sh
+#   Windows       : tools/install-tools.ps1
+# 二进制不入库，避免「clone 下来却跑不起来」（例如 arm64 机器上拿到 x86_64 的 ffprobe）。
+tools/ffmpeg
+tools/ffprobe
+
+# DSH 内部归档与工作区产物，不属于 skill 本体
+_dsh-archive/
+outputs/
+
+# 系统与编辑器噪音
+.DS_Store
+**/.DS_Store
+
+# 临时验证目录
+.tmp-*/
+.h5video-*/

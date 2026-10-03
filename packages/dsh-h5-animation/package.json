@@ -1,0 +1,37 @@
+{
+  "name": "dsh-h5-animation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把 h5-animation-video 技能接入 DSH profile 的组合包：挂载随包 skill、注册 h5video 原生工具、声明「H5 动画视频」agent preset",
+  "main": "tools/index.js",
+  "exports": {
+    ".": "./tools/index.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./skills/*": "./skills/*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "icon": "./icon.svg",
+  "files": [
+    "cordis.patch.yml",
+    "tools/",
+    "skills/",
+    "locale/",
+    "host-probe/",
+    "scripts/",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "sync-skill": "node scripts/sync-skill.mjs",
+    "sync-skill:check": "node scripts/sync-skill.mjs --check"
+  },
+  "license": "MIT"
+}
