@@ -1,0 +1,727 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>参考系改变时，同一物体的运动轨迹如何变化</title>
+<link rel="stylesheet" href="vendor/katex/katex-inline.css">
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#eef2f7;overflow:hidden}
+  #stage{position:relative;width:1280px;height:720px;margin:0 auto;background:#fff}
+  canvas{display:block;width:1280px;height:720px}
+  #math{position:absolute;left:0;top:0;width:1280px;height:720px;pointer-events:none}
+  #math .f{position:absolute;left:0;top:0;opacity:0;white-space:nowrap}
+  #ui{position:absolute;left:20px;top:16px;display:flex;align-items:center;gap:10px;
+      padding:10px 14px;border:1px solid rgba(15,23,42,0.12);border-radius:14px;
+      background:rgba(255,255,255,0.94);box-shadow:0 8px 22px rgba(15,23,42,0.10);
+      font:500 15px "PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;color:#0f172a}
+  #ui button{padding:8px 14px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#0f172a;
+      font:500 15px "PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;cursor:pointer}
+  #ui button.primary{background:#2563eb;border-color:#2563eb;color:#fff}
+  #ui button:disabled{opacity:.5;cursor:default}
+  #uiStatus{color:#64748b;font-size:13px;max-width:460px;line-height:1.35}
+  body.rec #ui{display:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv" width="1280" height="720"></canvas>
+  <div id="math"></div>
+  <div id="ui">
+    <button id="btnPlay" class="primary" type="button">▶ 播放讲解</button>
+    <button id="btnStop" type="button" disabled>■ 停止</button>
+    <button id="btnAnim" type="button">↻ 重播动画</button>
+    <div id="uiStatus">预览音色：浏览器内置中文语音（成片用 say 音色，两者可能不同）</div>
+  </div>
+</div>
+<script src="vendor/katex/katex.min.js"></script>
+<script>
+/* ===========================================================================
+ * 参考系改变时，同一物体的运动轨迹如何变化
+ *   window.__VM       时间轴（由 storyboard.cjs / build.mjs 注入）
+ *   window.__seek(t)  把画面确定性渲染到第 t 秒并停掉 rAF（逐帧截图用）
+ *   window.__ready    就绪标志
+ *
+ * 逐场景：title 课题 / setup 情境与两个参考系 / ground 地面参考系 /
+ *         train 车厢参考系 / compare 结尾并列对比 / outro 本节结论
+ * 主体过程中任何时刻只演示一种视角；compare 是唯一的并列画面。
+ * =========================================================================== */
+(function () {
+  var FONT = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif';
+  var TAU = Math.PI * 2;
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var W = 1280, H = 720;
+
+  var INK = '#0f172a', INK2 = '#334155', MUTED = '#64748b';
+  var BLUE = '#2563eb', BLUE_L = '#60a5fa', ORANGE = '#f97316';
+
+  var VM = window.__VM || { fps: 30, segments: [
+    { id: 'title',   start: 0,     dur: 6.8 },
+    { id: 'setup',   start: 6.8,   dur: 10.2 },
+    { id: 'ground',  start: 17.0,  dur: 7.3 },
+    { id: 'train',   start: 24.3,  dur: 10.3 },
+    { id: 'compare', start: 34.6,  dur: 8.6 },
+    { id: 'outro',   start: 43.2,  dur: 9.7 }
+  ]};
+  var SEG = VM.segments;
+  var TOTAL = SEG[SEG.length - 1].start + SEG[SEG.length - 1].dur;
+  var FADE = 0.5;
+
+  /* ---------- 通用工具 ---------- */
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function ease(p) { p = clamp(p, 0, 1); return 1 - Math.pow(1 - p, 3); }
+  function lerp(a, b, p) { return a + (b - a) * p; }
+  function frac(lt, dur, a, b) { return ease((lt - dur * a) / (dur * (b - a))); }
+  function lin(lt, dur, a, b) { return clamp((lt - dur * a) / (dur * (b - a)), 0, 1); }
+  function rgba(hex, a) {
+    var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+  }
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function panel(x, y, w, h, a, r) {
+    rr(x, y, w, h, r === undefined ? 18 : r);
+    ctx.save();
+    ctx.shadowColor = 'rgba(15,23,42,' + (0.10 * a) + ')';
+    ctx.shadowBlur = 22; ctx.shadowOffsetY = 7;
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.96 * a) + ')';
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(15,23,42,' + (0.12 * a) + ')';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  function text(s, x, y, font, color, align, baseline) {
+    ctx.font = font; ctx.fillStyle = color;
+    ctx.textAlign = align || 'left'; ctx.textBaseline = baseline || 'alphabetic';
+    ctx.fillText(s, x, y);
+  }
+  function arrow(x1, y1, x2, y2, color, width, head) {
+    var ang = Math.atan2(y2 - y1, x2 - x1), hl = head || (11 + width * 1.8);
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = width;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - hl * Math.cos(ang - 0.42), y2 - hl * Math.sin(ang - 0.42));
+    ctx.lineTo(x2 - hl * Math.cos(ang + 0.42), y2 - hl * Math.sin(ang + 0.42));
+    ctx.closePath(); ctx.fill();
+  }
+  function dashLine(x1, y1, x2, y2, color, w, d) {
+    ctx.save(); ctx.setLineDash(d || [7, 7]);
+    ctx.strokeStyle = color; ctx.lineWidth = w || 1;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
+  }
+  function dot(x, y, r, color, fill) {
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU);
+    if (fill) { ctx.fillStyle = color; ctx.fill(); }
+    else { ctx.strokeStyle = color; ctx.lineWidth = 1.8; ctx.stroke(); }
+  }
+  /* 水滴：向上收尖的水滴形 */
+  function drop(x, y, r, color, a) {
+    ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x, y - r * 2.2);
+    ctx.bezierCurveTo(x + r * 1.0, y - r * 0.8, x + r, y + r * 0.55, x, y + r);
+    ctx.bezierCurveTo(x - r, y + r * 0.55, x - r * 1.0, y - r * 0.8, x, y - r * 2.2);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  /* 人形剪影：baseY 为脚底 */
+  function person(x, baseY, h, color, a) {
+    ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineCap = 'round';
+    var r = h * 0.115;
+    ctx.beginPath(); ctx.arc(x, baseY - h + r * 1.6, r, 0, TAU); ctx.fill();
+    ctx.lineWidth = h * 0.15;
+    ctx.beginPath(); ctx.moveTo(x, baseY - h + r * 3.1); ctx.lineTo(x, baseY - h * 0.45); ctx.stroke();
+    ctx.lineWidth = h * 0.10;
+    ctx.beginPath(); ctx.moveTo(x, baseY - h * 0.78); ctx.lineTo(x - h * 0.20, baseY - h * 0.50); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, baseY - h * 0.78); ctx.lineTo(x + h * 0.20, baseY - h * 0.50); ctx.stroke();
+    ctx.lineWidth = h * 0.13;
+    ctx.beginPath(); ctx.moveTo(x, baseY - h * 0.45); ctx.lineTo(x - h * 0.14, baseY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, baseY - h * 0.45); ctx.lineTo(x + h * 0.14, baseY); ctx.stroke();
+    ctx.restore();
+  }
+  /* 车厢侧视：y 为车顶 */
+  function carriage(x, y, w, h, a, alpha, inside) {
+    ctx.save(); ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+    rr(x, y, w, h, h * 0.16);
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.95 * a) + ')'; ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,' + (0.55 * a) + ')'; ctx.lineWidth = 2; ctx.stroke();
+    if (inside) inside();   /* 车内的人：画在车身之后、车窗之前，隔着玻璃 */
+    var wn = 3, wp = w * 0.24, gy = y + h * 0.20, gh = h * 0.40, gap = (w - wn * wp) / (wn + 1);
+    for (var i = 0; i < wn; i++) {
+      var wx = x + gap + i * (wp + gap);
+      rr(wx, gy, wp, gh, 6);
+      ctx.fillStyle = 'rgba(96,165,250,' + (0.22 * a) + ')'; ctx.fill();
+      ctx.strokeStyle = 'rgba(51,65,85,' + (0.35 * a) + ')'; ctx.lineWidth = 1.4; ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(51,65,85,' + (0.55 * a) + ')';
+    var wy = y + h, wr = h * 0.13;
+    ctx.beginPath(); ctx.arc(x + w * 0.22, wy, wr, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + w * 0.78, wy, wr, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,' + (0.25 * a) + ')'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(x + w * 0.5, y + h * 0.15); ctx.lineTo(x + w * 0.5, y + h * 0.9); ctx.stroke();
+    ctx.restore();
+  }
+  /* 底部结论条 */
+  function caption(lt, dur, at, txt, color, wa) {
+    var a = ease((lt - dur * at) / 0.5);
+    if (a <= 0.002) return;
+    ctx.font = '600 22px ' + FONT;
+    var tw = ctx.measureText(txt).width;
+    var w = wa || (tw + 72), x = W / 2 - w / 2, y = 636 + (1 - a) * 12;
+    panel(x, y, w, 52, a, 26);
+    text(txt, W / 2, y + 27, '600 22px ' + FONT, rgba(color, a), 'center', 'middle');
+  }
+  /* 右上角"参考系"卡片 */
+  function refCard(a, title, sub) {
+    if (a <= 0.002) return;
+    var x = 968, y = 34 + (1 - a) * -10, w = 274, h = 78;
+    panel(x, y, w, h, a, 16);
+    ctx.fillStyle = rgba(BLUE, 0.95 * a); ctx.fillRect(x + 22, y + 22, 4, 34);
+    text(title, x + 40, y + 40, '700 22px ' + FONT, rgba(INK, a), 'left', 'middle');
+    text(sub, x + 40, y + 62, '400 14px ' + FONT, rgba(MUTED, a), 'left', 'middle');
+  }
+
+  /* ---------- 背景：纯白 + 细网格 ---------- */
+  function bg() {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(100,116,139,0.10)';
+    ctx.lineWidth = 1;
+    for (var x = 0; x <= W; x += 64) { ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); ctx.stroke(); }
+    for (var y = 0; y <= H; y += 64) { ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5); ctx.stroke(); }
+  }
+
+  /* ========================= 场景 1 · 课题 ========================= */
+  function miniTrack(cx, top, w, h, kind, a, label, sub) {
+    if (a <= 0.002) return;
+    panel(cx - w / 2, top, w, h, a, 14);
+    var x0 = cx, y0 = top + 22, y1 = top + h - 22, p = ease(a);
+    ctx.save(); ctx.lineCap = 'round';
+    if (kind === 'vert') {
+      dashLine(x0, y0, x0, y1, rgba(BLUE, 0.30 * a), 2, [5, 6]);
+      ctx.strokeStyle = rgba(BLUE, 0.95 * a); ctx.lineWidth = 3.4;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0, lerp(y0, y1, p)); ctx.stroke();
+      dot(x0, lerp(y0, y1, p), 4.4, rgba(BLUE, 0.95 * a), true);
+    } else {
+      var xa = x0 + 30, ya = y0, xb = x0 - 30, yb = y1;
+      dashLine(xa, ya, xb, yb, rgba(BLUE, 0.30 * a), 2, [5, 6]);
+      ctx.strokeStyle = rgba(BLUE, 0.95 * a); ctx.lineWidth = 3.4;
+      ctx.beginPath(); ctx.moveTo(xa, ya); ctx.lineTo(lerp(xa, xb, p), lerp(ya, yb, p)); ctx.stroke();
+      dot(lerp(xa, xb, p), lerp(ya, yb, p), 4.4, rgba(BLUE, 0.95 * a), true);
+    }
+    ctx.restore();
+    text(label, cx, top + h + 34, '600 20px ' + FONT, rgba(INK, a), 'center');
+    text(sub, cx, top + h + 58, '400 15px ' + FONT, rgba(MUTED, a), 'center');
+  }
+  function sceneTitle(lt, dur) {
+    var p = ease(lt / 0.9);
+    text('高中物理 · 必修一 · 运动的描述', W / 2, 168, '600 20px ' + FONT, rgba(BLUE, 0.95 * p), 'center');
+    text('参考系与运动的描述', W / 2, 268, '700 74px ' + FONT, rgba(INK, p), 'center');
+    var lw = 600 * ease((lt - 0.35) / 0.8);
+    if (lw > 1) {
+      var g = ctx.createLinearGradient(W / 2 - lw / 2, 0, W / 2 + lw / 2, 0);
+      g.addColorStop(0, 'rgba(37,99,235,0)'); g.addColorStop(0.5, 'rgba(37,99,235,1)'); g.addColorStop(1, 'rgba(249,115,22,0)');
+      ctx.fillStyle = g; ctx.fillRect(W / 2 - lw / 2, 314, lw, 4);
+    }
+    text('同一滴雨，两种轨迹', W / 2, 378, '400 30px ' + FONT, rgba(INK2, 0.96 * ease((lt - 0.7) / 0.8)), 'center');
+    miniTrack(W / 2 - 230, 432, 92, 154, 'vert', ease((lt - 1.1) / 0.7), '地面参考系', '轨迹竖直');
+    miniTrack(W / 2 + 230, 432, 92, 154, 'slant', ease((lt - 1.45) / 0.7), '车厢参考系', '轨迹斜向后');
+    text('参考系不同，同一物体的运动轨迹描述就不同', W / 2, 688, '400 19px ' + FONT, rgba(MUTED, 0.95 * ease((lt - 2.0) / 0.8)), 'center');
+  }
+
+  /* ==================== 场景 2 · 情境与两个参考系 ==================== */
+  function sceneSetup(lt, dur) {
+    text('无风时，雨滴相对地面竖直下落', W / 2, 88, '700 32px ' + FONT, rgba(INK, ease(lt / 0.7)), 'center');
+    text('两位观察者，观察的是同一滴雨', W / 2, 124, '400 19px ' + FONT, rgba(MUTED, 0.95 * ease((lt - 0.4) / 0.7)), 'center');
+
+    var aL = ease((lt - 0.5) / 0.6), aR = ease((lt - 1.0) / 0.6);
+    if (aL > 0.002) {
+      var lx = 96, ly = 176 + (1 - aL) * 24, lw = 486, lh = 408;
+      panel(lx, ly, lw, lh, aL);
+      ctx.fillStyle = rgba(BLUE, 0.95 * aL); ctx.fillRect(lx + 26, ly + 26, 4, 34);
+      text('地面参考系', lx + 44, ly + 44, '700 26px ' + FONT, rgba(INK, aL), 'left', 'middle');
+      text('站台上的人观察雨滴', lx + 44, ly + 70, '400 15px ' + FONT, rgba(MUTED, aL), 'left', 'middle');
+      var gy = ly + 320;
+      ctx.fillStyle = rgba('#cbd5e1', 0.42 * aL); ctx.fillRect(lx + 26, gy, lw - 52, 3);
+      ctx.fillStyle = rgba('#e2e8f0', 0.55 * aL);
+      for (var i = 0; i < 8; i++) ctx.fillRect(lx + 30 + i * 56, gy + 6, 34, 4);
+      var sp = [[lx + 150, ly + 118], [lx + 246, ly + 176], [lx + 330, ly + 96], [lx + 398, ly + 150], [lx + 210, ly + 236]];
+      for (var k = 0; k < sp.length; k++) drop(sp[k][0], sp[k][1], 6.5, rgba(BLUE_L, 0.85 * aL), 1);
+      drop(lx + 150, ly + 118, 9, rgba(ORANGE, 0.95 * aL), 1);
+      person(lx + 300, gy, 132, rgba(INK2, 0.9 * aL), 1);
+      dashLine(lx + 150, ly + 142, lx + 150, gy - 4, rgba(ORANGE, 0.55 * aL), 2, [7, 7]);
+      text('竖直下落', lx + 166, ly + 140, '400 16px ' + FONT, rgba(ORANGE, 0.95 * aL));
+    }
+    if (aR > 0.002) {
+      var rx = 698, ry = 176 + (1 - aR) * 24, rw = 486, rh = 408;
+      panel(rx, ry, rw, rh, aR);
+      ctx.fillStyle = rgba(BLUE, 0.95 * aR); ctx.fillRect(rx + 26, ry + 26, 4, 34);
+      text('车厢参考系', rx + 44, ry + 44, '700 26px ' + FONT, rgba(INK, aR), 'left', 'middle');
+      text('车厢里的乘客观察雨滴', rx + 44, ry + 70, '400 15px ' + FONT, rgba(MUTED, aR), 'left', 'middle');
+      var gy2 = ry + 320;
+      ctx.fillStyle = rgba('#cbd5e1', 0.42 * aR); ctx.fillRect(rx + 26, gy2, rw - 52, 3);
+      ctx.fillStyle = rgba('#e2e8f0', 0.55 * aR);
+      for (var j = 0; j < 8; j++) ctx.fillRect(rx + 40 + j * 56, gy2 + 6, 34, 4);
+      carriage(rx + 40, gy2 - 132, 300, 106, aR, 0.95, function () {
+        person(rx + 190, gy2 - 34, 88, rgba(INK2, 0.55 * aR), 1);
+      });
+      arrow(rx + 362, gy2 - 46, rx + 448, gy2 - 46, rgba(ORANGE, 0.95 * aR), 3, 14);
+      text('车厢前进', rx + 362, gy2 - 62, '400 16px ' + FONT, rgba(ORANGE, 0.95 * aR));
+      drop(rx + 250, ry + 120, 6.5, rgba(BLUE_L, 0.85 * aR), 1);
+      drop(rx + 336, ry + 172, 6.5, rgba(BLUE_L, 0.85 * aR), 1);
+      drop(rx + 404, ry + 104, 6.5, rgba(BLUE_L, 0.85 * aR), 1);
+      text('车窗外的雨', rx + 250, ry + 150, '400 16px ' + FONT, rgba(BLUE, 0.95 * aR));
+    }
+    var aM = ease((lt - 1.5) / 0.6);
+    if (aM > 0.002) {
+      drop(W / 2, 320, 15, rgba(ORANGE, 0.95 * aM), 1);
+      dashLine(W / 2, 348, W / 2, 410, rgba(ORANGE, 0.45 * aM), 2, [6, 6]);
+      text('同一滴雨', W / 2, 438, '600 17px ' + FONT, rgba(ORANGE, 0.95 * aM), 'center');
+    }
+    caption(lt, dur, 0.62, '同一滴雨 · 两个参考系 · 两次观察', INK2);
+  }
+
+  /* ==================== 场景 3 · 地面参考系 ==================== */
+  var GY = 560, GX = 470, GY0 = 118;
+  function sceneGround(lt, dur) {
+    ctx.fillStyle = 'rgba(248,250,252,0.9)';
+    ctx.fillRect(0, GY, W, H - GY);
+    ctx.strokeStyle = 'rgba(15,23,42,0.35)'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(0, GY + 0.5); ctx.lineTo(W, GY + 0.5); ctx.stroke();
+    ctx.fillStyle = 'rgba(203,213,225,0.5)';
+    for (var hx = 12; hx < W; hx += 48) ctx.fillRect(hx, GY + 14, 30, 5);
+
+    /* 背景里静止的电线杆：以地面为参考系，它们始终不动 */
+    var poleXs = [180, 640, 900, 1150];
+    for (var pi = 0; pi < poleXs.length; pi++) {
+      var ppx = poleXs[pi], phh = 150 - (pi % 3) * 30;
+      ctx.strokeStyle = 'rgba(100,116,139,0.36)'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(ppx, GY); ctx.lineTo(ppx, GY - phh); ctx.stroke();
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(ppx - 15, GY - phh); ctx.lineTo(ppx + 15, GY - phh); ctx.stroke();
+      ctx.lineWidth = 2.6;
+      ctx.beginPath(); ctx.moveTo(ppx - 8, GY - phh + 16); ctx.lineTo(ppx + 8, GY - phh + 16); ctx.stroke();
+    }
+    var aPole = ease((lt - dur * 0.16) / 0.6);
+    if (aPole > 0.002) text('电线杆相对地面静止', 150, 384, '400 16px ' + FONT, rgba(MUTED, 0.95 * aPole));
+
+    var carX = -460 + (lt / dur) * (W + 520);
+    carriage(carX, GY + 26, 420, 118, 1, 0.42);
+
+    var p = lin(lt, dur, 0.10, 0.62);
+    var yNow = lerp(GY0, GY - 6, p);
+    var aGuide = ease((lt - dur * 0.05) / 0.5);
+    if (aGuide > 0.002) dashLine(GX, GY0 - 16, GX, GY - 6, rgba(MUTED, 0.35 * aGuide), 2, [8, 8]);
+
+    ctx.save(); ctx.lineCap = 'round';
+    ctx.strokeStyle = rgba(BLUE, 0.95); ctx.lineWidth = 3.6;
+    ctx.beginPath(); ctx.moveTo(GX, GY0); ctx.lineTo(GX, yNow); ctx.stroke();
+    ctx.restore();
+    for (var y = GY0; y <= yNow - 6; y += 40) dot(GX, y, 4, rgba(BLUE, 0.45), false);
+
+    var aV = ease((lt - dur * 0.20) / 0.6);
+    if (aV > 0.002) {
+      arrow(GX - 52, GY0, GX - 52, GY - 12, rgba(MUTED, 0.7 * aV), 2, 12);
+      arrow(GX - 52, GY - 12, GX - 52, GY0, rgba(MUTED, 0.7 * aV), 2, 12);
+      text('竖直方向', GX - 66, (GY0 + GY) / 2 - 8, '400 17px ' + FONT, rgba(MUTED, 0.95 * aV), 'right');
+      text('轨迹：竖直的直线', GX + 34, GY0 + 8, '600 21px ' + FONT, rgba(BLUE, 0.95 * aV));
+    }
+
+    if (p < 1) {
+      ctx.save();
+      var tg = ctx.createLinearGradient(0, yNow - 64, 0, yNow);
+      tg.addColorStop(0, rgba(BLUE, 0)); tg.addColorStop(1, rgba(BLUE, 0.42));
+      ctx.fillStyle = tg; ctx.fillRect(GX - 2.5, yNow - 64, 5, 64);
+      ctx.restore();
+      drop(GX, yNow, 9, BLUE, 1);
+    } else {
+      var q = clamp((lt - dur * 0.62) / 1.5, 0, 1);
+      ctx.save();
+      ctx.strokeStyle = rgba(BLUE, 0.45 * (1 - q)); ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.ellipse(GX, GY - 1, 8 + 40 * q, 3 + 9 * q, 0, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = rgba(BLUE_L, 0.35 * (1 - q)); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(GX, GY - 1, 5 + 24 * q, 2 + 6 * q, 0, 0, TAU); ctx.stroke();
+      ctx.restore();
+      drop(GX, GY - 14, 9, BLUE, 0.92);
+    }
+
+    refCard(ease((lt - 0.35) / 0.6), '参考系：地面', '站台上的人观察');
+    caption(lt, dur, 0.62, '以地面为参考系：轨迹是竖直的直线', INK);
+  }
+
+  /* ==================== 场景 4 · 车厢参考系 ==================== */
+  function sceneTrain(lt, dur) {
+    rr(40, 62, W - 80, 556, 24);
+    ctx.fillStyle = 'rgba(248,250,252,0.92)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(15,23,42,0.10)'; ctx.lineWidth = 1.6; ctx.stroke();
+
+    var wx = 330, wy = 118, ww = 790, wh = 344;
+    ctx.save();
+    rr(wx, wy, ww, wh, 14); ctx.clip();
+    var sg = ctx.createLinearGradient(0, wy, 0, wy + wh);
+    sg.addColorStop(0, '#f7fbff'); sg.addColorStop(1, '#eef6ff');
+    ctx.fillStyle = sg; ctx.fillRect(wx, wy, ww, wh);
+    var hz = wy + 250;
+    ctx.fillStyle = 'rgba(226,232,240,0.75)'; ctx.fillRect(wx, hz, ww, wy + wh - hz);
+    ctx.strokeStyle = 'rgba(100,116,139,0.45)'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(wx, hz + 0.5); ctx.lineTo(wx + ww, hz + 0.5); ctx.stroke();
+    /* 车厢参考系里，窗外的景物和雨滴具有同一个水平速度：
+     * 都由这条斜向后轨迹的横向速度决定，所以"电线杆后退"与"雨滴后退"必须一样快。 */
+    var A = { x: wx + 726, y: wy + 46 }, B = { x: wx + 456, y: wy + 316 };
+    var T0 = 0.10, T1 = 0.58;
+    var VX = (A.x - B.x) / ((T1 - T0) * dur);        /* px/s：车厢参考系里景物/雨滴的后退速度 */
+
+    /* 向后掠过的电线杆：与雨滴同一水平速度 */
+    var scroll = (lt * VX) % 600;   /* 循环周期必须等于"三根一组"的图案周期，否则整排杆子会跳一下 */
+    for (var i = -1; i < 6; i++) {
+      var px = wx + ww - scroll - i * 200;
+      if (px < wx - 20 || px > wx + ww + 20) continue;
+      /* 三根一组的杆高各不相同：后退方向一眼可辨，不会被等距同形的杆子看反 */
+      var hh = 118 - (((i % 3) + 3) % 3) * 24;
+      ctx.strokeStyle = 'rgba(100,116,139,0.36)'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(px, hz); ctx.lineTo(px, hz - hh); ctx.stroke();
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(px - 13, hz - hh); ctx.lineTo(px + 13, hz - hh); ctx.stroke();
+      ctx.lineWidth = 2.6;
+      ctx.beginPath(); ctx.moveTo(px - 7, hz - hh + 14); ctx.lineTo(px + 7, hz - hh + 14); ctx.stroke();
+    }
+    /* 窗外其它雨点：方向、速度都与同一滴雨一致（45° 斜向后，速率为 VX）。
+     * 每条雨痕沿一条 45° 线循环，循环点落在视野上方或地平线以下，所以不会凭空闪现。 */
+    var LOOP = (hz + 46) - (wy - 60);
+    for (var j = 0; j < 5; j++) {
+      var c45 = (wx + 170) + j * 180;                 /* x + y 恒定 => 沿 45° 斜向后的一条线 */
+      var sy = (wy - 60) + ((j * 70 + lt * VX) % LOOP);
+      var sx = c45 - sy;
+      if (sy < wy - 2 || sy > hz - 4 || sx < wx + 8 || sx > wx + ww - 4) continue;
+      ctx.strokeStyle = rgba(BLUE_L, 0.32); ctx.lineWidth = 2.4; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(sx + 15, sy - 15); ctx.lineTo(sx - 15, sy + 15); ctx.stroke();
+    }
+    var p = lin(lt, dur, T0, T1);
+    var hx = lerp(A.x, B.x, p), hy = lerp(A.y, B.y, p);
+    dashLine(A.x, A.y, B.x, B.y, rgba(MUTED, 0.38), 2, [8, 8]);
+    ctx.save(); ctx.lineCap = 'round';
+    ctx.strokeStyle = rgba(BLUE, 0.95); ctx.lineWidth = 3.6;
+    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(hx, hy); ctx.stroke();
+    ctx.restore();
+    var L = Math.hypot(B.x - A.x, B.y - A.y), ux = (B.x - A.x) / L, uy = (B.y - A.y) / L;
+    for (var s = 0; s <= L * p - 8; s += 38) dot(A.x + ux * s, A.y + uy * s, 4, rgba(BLUE, 0.45), false);
+    drop(hx, hy, 9, BLUE, p < 1 ? 1 : 0.9);
+    ctx.restore();
+
+    rr(wx, wy, ww, wh, 14);
+    ctx.strokeStyle = 'rgba(15,23,42,0.22)'; ctx.lineWidth = 3; ctx.stroke();
+
+    var aLbl = ease((lt - dur * 0.18) / 0.6);
+    if (aLbl > 0.002) {
+      panel(wx + 24, wy + 20, 200, 42, aLbl, 12);
+      text('轨迹：斜向后', wx + 124, wy + 41, '600 19px ' + FONT, rgba(BLUE, aLbl), 'center', 'middle');
+    }
+
+    ctx.strokeStyle = 'rgba(100,116,139,0.26)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(74, 600.5); ctx.lineTo(1206, 600.5); ctx.stroke();
+    person(212, 598, 168, rgba(INK2, 0.85), 1);
+    text('乘客看窗外', 212, 424, '400 16px ' + FONT, rgba(MUTED, 1), 'center');
+
+    var aF = ease((lt - dur * 0.06) / 0.6);
+    if (aF > 0.002) {
+      arrow(112, 96, 250, 96, rgba(ORANGE, 0.95 * aF), 3.4, 15);
+      text('车厢前进方向', 112, 78, '600 18px ' + FONT, rgba(ORANGE, 0.95 * aF));
+    }
+    text('窗外的电线杆不断向后退', wx + ww - 10, wy + wh + 30, '400 16px ' + FONT, rgba(MUTED, 0.95), 'right');
+
+    refCard(ease((lt - 0.35) / 0.6), '参考系：车厢', '车厢里的乘客观察');
+    caption(lt, dur, 0.58, '以车厢为参考系：轨迹是斜向后的直线', INK);
+  }
+
+  /* ==================== 场景 5 · 结尾并列对比 ==================== */
+  function sceneCompare(lt, dur) {
+    text('两种参考系，两条轨迹', W / 2, 100, '700 34px ' + FONT, rgba(INK, ease(lt / 0.6)), 'center');
+    dashLine(640, 150, 640, 566, 'rgba(100,116,139,0.35)', 2, [8, 8]);
+
+    var aL = ease((lt - 0.25) / 0.6);
+    if (aL > 0.002) {
+      panel(80, 150, 520, 400, aL);
+      ctx.fillStyle = rgba(BLUE, 0.95 * aL); ctx.fillRect(106, 176, 4, 30);
+      text('地面参考系', 122, 192, '700 25px ' + FONT, rgba(INK, aL), 'left', 'middle');
+      text('站台上的人看到', 122, 216, '400 15px ' + FONT, rgba(MUTED, aL), 'left', 'middle');
+      var gy = 452;
+      ctx.fillStyle = rgba('#cbd5e1', 0.5 * aL); ctx.fillRect(106, gy, 468, 3);
+      var p = frac(lt, dur, 0.22, 0.42), x = 340, y0 = 262, y1 = gy - 6;
+      dashLine(x, y0 - 10, x, y1, rgba(MUTED, 0.30 * aL), 2, [7, 7]);
+      ctx.save(); ctx.lineCap = 'round';
+      ctx.strokeStyle = rgba(BLUE, 0.95 * aL); ctx.lineWidth = 3.4;
+      ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, lerp(y0, y1, p)); ctx.stroke();
+      ctx.restore();
+      for (var yy = y0; yy < lerp(y0, y1, p) - 6; yy += 38) dot(x, yy, 3.6, rgba(BLUE, 0.45 * aL), false);
+      drop(x, lerp(y0, y1, p), 8, BLUE, 0.95 * aL);
+      text('轨迹：竖直的直线', 122, 512, '600 21px ' + FONT, rgba(BLUE, aL));
+    }
+    var aR = ease((lt - 0.45) / 0.6);
+    if (aR > 0.002) {
+      panel(680, 150, 520, 400, aR);
+      ctx.fillStyle = rgba(BLUE, 0.95 * aR); ctx.fillRect(706, 176, 4, 30);
+      text('车厢参考系', 722, 192, '700 25px ' + FONT, rgba(INK, aR), 'left', 'middle');
+      text('车厢里的乘客看到', 722, 216, '400 15px ' + FONT, rgba(MUTED, aR), 'left', 'middle');
+      var gy2 = 452;
+      ctx.fillStyle = rgba('#cbd5e1', 0.5 * aR); ctx.fillRect(706, gy2, 468, 3);
+      for (var q = 0; q < 3; q++) arrow(772 + q * 150, gy2 + 18, 726 + q * 150, gy2 + 18, rgba(MUTED, 0.55 * aR), 2.4, 11);
+      var p2 = frac(lt, dur, 0.28, 0.48), xa = 1080, ya = 262, xb = 902, yb = gy2 - 6;
+      dashLine(xa, ya, xb, yb, rgba(MUTED, 0.30 * aR), 2, [7, 7]);
+      ctx.save(); ctx.lineCap = 'round';
+      ctx.strokeStyle = rgba(BLUE, 0.95 * aR); ctx.lineWidth = 3.4;
+      ctx.beginPath(); ctx.moveTo(xa, ya); ctx.lineTo(lerp(xa, xb, p2), lerp(ya, yb, p2)); ctx.stroke();
+      ctx.restore();
+      var L2 = Math.hypot(xb - xa, yb - ya), vx = (xb - xa) / L2, vy = (yb - ya) / L2;
+      for (var s2 = 0; s2 < L2 * p2 - 8; s2 += 38) dot(xa + vx * s2, ya + vy * s2, 3.6, rgba(BLUE, 0.45 * aR), false);
+      drop(lerp(xa, xb, p2), lerp(ya, yb, p2), 8, BLUE, 0.95 * aR);
+      text('轨迹：斜向后的直线', 722, 512, '600 21px ' + FONT, rgba(BLUE, aR));
+    }
+    caption(lt, dur, 0.52, '参考系不同 → 轨迹不同', INK);
+  }
+
+  /* ==================== 场景 6 · 本节结论 ==================== */
+  function sceneOutro(lt, dur) {
+    var a = ease(lt / 0.7);
+    text('本节结论', W / 2, 132, '600 20px ' + FONT, rgba(BLUE, 0.95 * a), 'center');
+    text('参考系不同，轨迹就不同', W / 2, 224, '700 52px ' + FONT, rgba(INK, a), 'center');
+    var lw = 560 * ease((lt - 0.3) / 0.8);
+    if (lw > 1) {
+      var g = ctx.createLinearGradient(W / 2 - lw / 2, 0, W / 2 + lw / 2, 0);
+      g.addColorStop(0, 'rgba(37,99,235,0)'); g.addColorStop(0.5, 'rgba(37,99,235,1)'); g.addColorStop(1, 'rgba(249,115,22,0)');
+      ctx.fillStyle = g; ctx.fillRect(W / 2 - lw / 2, 256, lw, 4);
+    }
+    text('描述运动，必须先指明以哪个物体为参考系', W / 2, 314, '500 27px ' + FONT, rgba(INK2, 0.96 * ease((lt - 0.55) / 0.8)), 'center');
+
+    var aC1 = ease((lt - 0.95) / 0.6), aC2 = ease((lt - 1.25) / 0.6);
+    var cy = 386, ch = 190;
+    if (aC1 > 0.002) {
+      panel(232, cy + (1 - aC1) * 18, 380, ch, aC1);
+      text('地面参考系', 262, cy + 40, '600 22px ' + FONT, rgba(INK, aC1), 'left', 'middle');
+      var x1 = 422, y0 = cy + 66, y1 = cy + ch - 26;
+      ctx.fillStyle = rgba('#cbd5e1', 0.55 * aC1); ctx.fillRect(262, y1 + 4, 320, 3);
+      var pp = frac(lt, dur, 0.55, 0.72);
+      ctx.save(); ctx.lineCap = 'round'; ctx.strokeStyle = rgba(BLUE, 0.95 * aC1); ctx.lineWidth = 3.2;
+      ctx.beginPath(); ctx.moveTo(x1, y0); ctx.lineTo(x1, lerp(y0, y1, pp)); ctx.stroke(); ctx.restore();
+      drop(x1, lerp(y0, y1, pp), 7, BLUE, 0.95 * aC1);
+      text('轨迹是竖直的直线', 262, cy + ch - 6, '400 16px ' + FONT, rgba(MUTED, aC1));
+    }
+    if (aC2 > 0.002) {
+      panel(668, cy + (1 - aC2) * 18, 380, ch, aC2);
+      text('车厢参考系', 698, cy + 40, '600 22px ' + FONT, rgba(INK, aC2), 'left', 'middle');
+      var xa2 = 940, ya2 = cy + 66, xb2 = 812, yb2 = cy + ch - 26;
+      ctx.fillStyle = rgba('#cbd5e1', 0.55 * aC2); ctx.fillRect(698, yb2 + 4, 320, 3);
+      var pp2 = frac(lt, dur, 0.62, 0.79);
+      ctx.save(); ctx.lineCap = 'round'; ctx.strokeStyle = rgba(BLUE, 0.95 * aC2); ctx.lineWidth = 3.2;
+      ctx.beginPath(); ctx.moveTo(xa2, ya2); ctx.lineTo(lerp(xa2, xb2, pp2), lerp(ya2, yb2, pp2)); ctx.stroke(); ctx.restore();
+      drop(lerp(xa2, xb2, pp2), lerp(ya2, yb2, pp2), 7, BLUE, 0.95 * aC2);
+      text('轨迹是斜向后的直线', 698, cy + ch - 6, '400 16px ' + FONT, rgba(MUTED, aC2));
+    }
+  }
+
+  var SCENES = {
+    title: sceneTitle, setup: sceneSetup, ground: sceneGround,
+    train: sceneTrain, compare: sceneCompare, outro: sceneOutro
+  };
+
+  /* ---------- 公式层（本片无公式，保留以便扩展） ---------- */
+  var MATH = [];
+  function math(spec) { MATH.push(spec); return spec; }
+  function buildMath() {
+    var host = document.getElementById('math');
+    var ok = (typeof katex !== 'undefined');
+    MATH.forEach(function (f) {
+      var el = document.createElement('div');
+      el.className = 'f';
+      el.style.fontSize = (f.size || 30) + 'px';
+      if (f.color) el.style.color = f.color;
+      if (ok) { try { katex.render(f.tex, el, { throwOnError: false, displayMode: false }); } catch (e) { el.textContent = f.tex; } }
+      else { el.textContent = f.tex; }
+      host.appendChild(el);
+      f.el = el;
+    });
+  }
+  function syncMath() { for (var i = 0; i < MATH.length; i++) MATH[i].el.style.opacity = 0; }
+
+  /* ---------- 渲染 ---------- */
+  function render(t) {
+    t = clamp(t, 0, TOTAL);
+    bg();
+    var idx = 0;
+    for (var i = 0; i < SEG.length; i++) { if (t >= SEG[i].start) idx = i; }
+    var s = SEG[idx], lt = t - s.start;
+    var prevIdx = -1;
+    if (idx > 0 && lt < FADE) {
+      prevIdx = idx - 1;
+      ctx.globalAlpha = 1;
+      SCENES[SEG[prevIdx].id](SEG[prevIdx].dur, SEG[prevIdx].dur);
+      ctx.globalAlpha = lt / FADE;
+    } else { ctx.globalAlpha = 1; }
+    SCENES[s.id](lt, s.dur);
+    ctx.globalAlpha = 1;
+    syncMath();
+
+    ctx.fillStyle = 'rgba(15,23,42,0.10)';
+    ctx.fillRect(0, H - 5, W, 3);
+    var pw = Math.max(W * (t / TOTAL), 1);
+    var pg = ctx.createLinearGradient(0, 0, pw, 0);
+    pg.addColorStop(0, '#2563eb'); pg.addColorStop(1, '#60a5fa');
+    ctx.fillStyle = pg;
+    ctx.fillRect(0, H - 5, pw, 3);
+  }
+
+  buildMath();
+  var raf = null, t0 = null, narrating = false;
+  function stopLoop() { if (raf !== null) { cancelAnimationFrame(raf); raf = null; } }
+  function loop(ts) {
+    if (t0 === null) t0 = ts;
+    var t = (ts - t0) / 1000;
+    render(t);
+    if (t < TOTAL) raf = requestAnimationFrame(loop);
+    else raf = null;
+  }
+  function play() {
+    if (narrating) return;
+    stopLoop(); t0 = null; raf = requestAnimationFrame(loop);
+  }
+  window.__seek = function (t) { stopLoop(); render(t); };
+  window.__play = play;
+  window.__meta = { total: TOTAL, segments: SEG };
+
+  /* ==================== 逐段讲解语音预览（speechSynthesis） ====================
+   * 文案与 script.json 的 segments 一一对应、顺序一致（预览用浏览器内置中文音色，
+   * 成片由 build.mjs 用 script.json 里指定的 say 音色合成）。 */
+  var NARR = [
+    '同一个物体的运动，换一个参考系来描述，轨迹会怎样变化？',
+    '无风时，雨滴相对地面竖直下落。站台上的人和车厢里的乘客，正以不同的参考系观察同一滴雨。',
+    '以地面为参考系，雨滴沿竖直方向下落，轨迹是一条竖直的直线。',
+    '以车厢为参考系，车厢不断向前，雨滴一边下落，一边相对车厢向后退，轨迹是一条斜向后的直线。',
+    '同一个雨滴，在地面参考系里是竖直的直线，在车厢参考系里是斜向后的直线。',
+    '参考系不同，同一物体运动的轨迹就不同。所以描述运动，必须先说明以哪个物体为参考系。'
+  ];
+  var btnPlay = document.getElementById('btnPlay'), btnStop = document.getElementById('btnStop'),
+      btnAnim = document.getElementById('btnAnim'), uiStatus = document.getElementById('uiStatus');
+  var narrRaf = null, narrT0 = 0, narrSegStart = 0, narrSegEnd = 0, narrIdx = -1, paused = false, narrTimer = null, narrWatch = null;
+  function clearNarrTimers() {
+    if (narrTimer !== null) { clearTimeout(narrTimer); narrTimer = null; }
+    if (narrWatch !== null) { clearInterval(narrWatch); narrWatch = null; }
+    if (narrRaf !== null) { cancelAnimationFrame(narrRaf); narrRaf = null; }
+  }
+
+  function pickZhVoice() {
+    if (!window.speechSynthesis) return null;
+    var vs = speechSynthesis.getVoices();
+    if (!vs || !vs.length) return null;
+    var zh = vs.filter(function (v) { return /^zh[-_]?CN/i.test(v.lang || ''); });
+    if (!zh.length) zh = vs.filter(function (v) { return /^zh/i.test(v.lang || ''); });
+    if (!zh.length) return null;
+    var pref = ['Tingting', 'Sinji', 'Meijia', 'Sandy', 'Flo'];
+    for (var i = 0; i < pref.length; i++) for (var j = 0; j < zh.length; j++) if ((zh[j].name || '').indexOf(pref[i]) >= 0) return zh[j];
+    return zh[0];
+  }
+  function setStatus(s) { uiStatus.textContent = s; }
+  function narrLoop(ts) {
+    if (paused) return;
+    var t = narrSegStart + (ts - narrT0) / 1000;
+    if (t >= narrSegEnd) { render(narrSegEnd); narrRaf = null; return; }
+    render(t);
+    narrRaf = requestAnimationFrame(narrLoop);
+  }
+  function speakSeg(i) {
+    if (i >= NARR.length) { narrEnd(); return; }
+    narrIdx = i;
+    var seg = SEG[i] || SEG[SEG.length - 1];
+    narrSegStart = seg.start; narrSegEnd = seg.start + seg.dur;
+    paused = false;
+    stopLoop();
+    if (narrRaf !== null) { cancelAnimationFrame(narrRaf); narrRaf = null; }
+    narrT0 = performance.now();
+    clearNarrTimers();
+    narrRaf = requestAnimationFrame(narrLoop);
+    var v = pickZhVoice();
+    if (!v) {
+      /* 机器上没有任何中文音色时：按预估时长静默推进，保证"逐段对应"仍然可审核 */
+      narrTimer = setTimeout(function () { if (narrating && !paused) speakSeg(i + 1); }, seg.dur * 1000);
+      setStatus('本机浏览器没有可用中文语音，静默播放第 ' + (i + 1) + '/' + NARR.length + ' 段（画面按预估时长推进）');
+      return;
+    }
+    var u = new SpeechSynthesisUtterance(NARR[i]);
+    u.lang = 'zh-CN';
+    u.voice = v; if (v.lang) u.lang = v.lang;
+    u.rate = 1.0; u.pitch = 1.0;
+    u.onend = function () { if (narrating && !paused) speakSeg(i + 1); };
+    u.onerror = function () { if (narrating && !paused) speakSeg(i + 1); };
+    speechSynthesis.speak(u);
+    /* 兜底：个别浏览器的 onend 不回调（或语音引擎静默失败），用轮询保证逐段继续推进 */
+    narrWatch = setInterval(function () {
+      if (!narrating || paused || narrIdx !== i) { clearInterval(narrWatch); narrWatch = null; return; }
+      var el = (performance.now() - narrT0) / 1000;
+      if (el > Math.max(seg.dur * 2.5, 12) || (!speechSynthesis.speaking && !speechSynthesis.pending)) {
+        clearInterval(narrWatch); narrWatch = null;
+        speakSeg(i + 1);
+      }
+    }, 700);
+    setStatus('正在讲解 ' + (i + 1) + '/' + NARR.length + '（' + (v ? '预览音色 ' + v.name : '浏览器默认中文音色') + '，成片用 say 音色）');
+  }
+  function narrEnd() {
+    narrating = false;
+    clearNarrTimers();
+    stopLoop();
+    render(TOTAL);
+    btnPlay.disabled = false; btnStop.disabled = true;
+    btnPlay.textContent = '▶ 重播讲解';
+    setStatus('讲解结束，画面停在结尾。可点「重播讲解」再听一遍，或点「重播动画」只看画面。');
+  }
+  btnPlay.addEventListener('click', function () {
+    if (!window.speechSynthesis) { setStatus('此浏览器不支持 speechSynthesis，请直接看动画画面。'); return; }
+    speechSynthesis.cancel();
+    narrating = true; paused = false;
+    btnPlay.disabled = true; btnStop.disabled = false;
+    render(0);
+    speakSeg(0);
+  });
+  btnStop.addEventListener('click', function () {
+    narrating = false; paused = true;
+    clearNarrTimers();
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    btnPlay.disabled = false; btnStop.disabled = true;
+    btnPlay.textContent = '▶ 播放讲解';
+    setStatus('已停止。可点「播放讲解」从第一段重新开始。');
+  });
+  btnAnim.addEventListener('click', function () {
+    narrating = false;
+    clearNarrTimers();
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    btnPlay.disabled = false; btnStop.disabled = true;
+    btnPlay.textContent = '▶ 播放讲解';
+    stopLoop(); t0 = null; raf = requestAnimationFrame(loop);
+    setStatus('只播放画面（静音）。要点「播放讲解」才会朗读旁白。');
+  });
+  if (window.speechSynthesis) {
+    speechSynthesis.onvoiceschanged = function () {
+      var v = pickZhVoice();
+      if (v && !narrating) setStatus('预览音色：' + v.name + '（浏览器内置中文语音，成片用 say 音色）');
+    };
+    var v0 = pickZhVoice();
+    if (v0) setStatus('预览音色：' + v0.name + '（浏览器内置中文语音，成片用 say 音色）');
+  } else {
+    setStatus('此浏览器不支持 speechSynthesis，语音预览不可用。');
+  }
+
+  /* 录制/截图模式（脚本注入了 __VM）隐藏交互控件，保证画面干净 */
+  if (window.__VM) document.body.classList.add('rec');
+
+  window.__ready = true;
+  render(0);
+  if (!window.__VM) play();
+})();
+</script>
+</body>
+</html>

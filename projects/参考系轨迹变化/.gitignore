@@ -1,0 +1,7 @@
+# 机器本地的东西：node_modules、scaffold 生成的二进制软链、逐帧中间件与大体积 wav
+node_modules/
+tools/
+work/*.wav
+work/frames/
+work/audio-list.txt
+work/qa-tts-audio.cjs

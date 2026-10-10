@@ -1,0 +1,38 @@
+{
+  "fps": 30,
+  "segments": [
+    {
+      "id": "title",
+      "start": 0,
+      "dur": 6.9436
+    },
+    {
+      "id": "setup",
+      "start": 6.9436,
+      "dur": 10.6481
+    },
+    {
+      "id": "ground",
+      "start": 17.5917,
+      "dur": 7.6643
+    },
+    {
+      "id": "train",
+      "start": 25.256,
+      "dur": 11.6929
+    },
+    {
+      "id": "compare",
+      "start": 36.9489,
+      "dur": 8.8476
+    },
+    {
+      "id": "outro",
+      "start": 45.7966,
+      "dur": 10.4194
+    }
+  ],
+  "total": 56.216,
+  "totalFrames": 1686,
+  "output": "/Users/chouchou/开发/h5动画演示/projects/参考系轨迹变化/out/参考系轨迹变化.mp4"
+}
