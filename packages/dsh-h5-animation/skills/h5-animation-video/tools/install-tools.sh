@@ -1,14 +1,34 @@
 #!/usr/bin/env bash
 # 下载与本机架构匹配的静态 ffmpeg / ffprobe 到本目录（macOS / Linux）。
 #
-#   用法：cd "<项目>" && ./tools/install-tools.sh
+#   用法：./install-tools.sh [目标目录]
+#         不给目标目录就装到脚本自身所在目录；给了就装到那里（doctor 会装到 <工作区>/tools）。
 #   Windows：用同目录的 install-tools.ps1
+#
+#   内网/镜像：H5VIDEO_MIRROR=https://内网镜像/ffmpeg ./install-tools.sh <目标目录>
+#   镜像目录按固定文件名提供，缺哪个就退回哪个的上游地址：
+#     ffmpeg-darwin-arm64.gz / ffmpeg-darwin-x64.gz
+#     ffprobe-darwin-arm64.tgz / ffprobe-darwin-x64.zip / ffprobe-darwin-arm64.zip
+#     ffmpeg-release-arm64-static.tar.xz / ffmpeg-release-amd64-static.tar.xz
 #
 # 关键点：**实际跑一次 `-version` 来判断可用性**，不只看可执行位。
 # x86_64 的 ffprobe 在没有 Rosetta 的 arm64 机器上也是「可执行」的，但一跑就
 # `Bad CPU type in executable`——只检查文件存在的脚本会一直跳过它，把问题留给出片。
 set -euo pipefail
-cd "$(dirname "$0")"
+SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+TARGET_DIR="${1:-$SRC_DIR}"
+mkdir -p "$TARGET_DIR"
+cd "$TARGET_DIR"
+
+# 镜像优先：H5VIDEO_MIRROR 指向一个扁平目录，按固定文件名取包；没设就用上游。
+mirror_url() {
+  if [ -n "${H5VIDEO_MIRROR:-}" ]; then
+    printf '%s/%s' "${H5VIDEO_MIRROR%/}" "$2"
+  else
+    printf '%s' "$1"
+  fi
+}
+if [ -n "${H5VIDEO_MIRROR:-}" ]; then printf '%s\n' "使用镜像 ${H5VIDEO_MIRROR}" >&2; fi
 
 OS=$(uname -s)
 ARCH=$(uname -m)
@@ -52,12 +72,13 @@ fetch() {
   fi
 }
 
-linux_static_url="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-$([ "$ARCH" = arm64 ] && echo arm64 || echo amd64)-static.tar.xz"
+linux_static_file="ffmpeg-release-$([ "$ARCH" = arm64 ] && echo arm64 || echo amd64)-static.tar.xz"
+linux_static_url="$(mirror_url "https://johnvansickle.com/ffmpeg/releases/$linux_static_file" "$linux_static_file")"
 
 download_ffmpeg() {
   case "$PLATFORM" in
     darwin)
-      fetch "https://github.com/eugeneware/ffmpeg-static/releases/download/${FFMPEG_TAG}/ffmpeg-darwin-${ARCH}.gz" ffmpeg.gz
+      fetch "$(mirror_url "https://github.com/eugeneware/ffmpeg-static/releases/download/${FFMPEG_TAG}/ffmpeg-darwin-${ARCH}.gz" "ffmpeg-darwin-${ARCH}.gz")" ffmpeg.gz
       gunzip -f ffmpeg.gz
       ;;
     linux)
@@ -74,18 +95,18 @@ download_ffprobe() {
     darwin-arm64)
       # evermeet.cx 只有 x86_64，arm64 必须另找来源。先试 npm 上的 @ffprobe-installer 平台包，
       # 拿不到再退回 osxexperts 的 arm64 静态包；两条路都会在下面做 -version 自检。
-      if ! { fetch "https://registry.npmjs.org/@ffprobe-installer/darwin-arm64/-/darwin-arm64-${FFPROBE_NPM_VERSION}.tgz" ffprobe.tgz &&
+      if ! { fetch "$(mirror_url "https://registry.npmjs.org/@ffprobe-installer/darwin-arm64/-/darwin-arm64-${FFPROBE_NPM_VERSION}.tgz" "ffprobe-darwin-arm64.tgz")" ffprobe.tgz &&
              tar -xzf ffprobe.tgz package/ffprobe &&
              mv -f package/ffprobe ffprobe &&
              rm -rf ffprobe.tgz package; }; then
         rm -rf ffprobe.tgz package
-        fetch "https://www.osxexperts.net/ffprobe9arm.zip" ffprobe.zip
+        fetch "$(mirror_url "https://www.osxexperts.net/ffprobe9arm.zip" "ffprobe-darwin-arm64.zip")" ffprobe.zip
         unzip -o -q ffprobe.zip
         rm -f ffprobe.zip
       fi
       ;;
     darwin-x64)
-      fetch "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip" ffprobe.zip
+      fetch "$(mirror_url "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip" "ffprobe-darwin-x64.zip")" ffprobe.zip
       unzip -o -q ffprobe.zip
       rm -f ffprobe.zip
       ;;

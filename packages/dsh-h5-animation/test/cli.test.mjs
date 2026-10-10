@@ -26,16 +26,23 @@ function makeWorkRoot() {
   }
 }
 
-function h5video(args, workRoot) {
+function h5video(args, workRoot, extraEnv = {}) {
   return new Promise((resolve) => {
     execFile(process.execPath, [CLI, ...args], {
-      env: { ...process.env, H5VIDEO_WORK_ROOT: workRoot },
+      env: { ...process.env, H5VIDEO_WORK_ROOT: workRoot, ...extraEnv },
       maxBuffer: 8 * 1024 * 1024,
       timeout: 120000,
     }, (error, stdout, stderr) => {
       resolve({ code: typeof error?.code === 'number' ? error.code : (error ? 1 : 0), stdout, stderr })
     })
   })
+}
+
+/** 极简环境：PATH 只留一个空目录，用来稳定复现「缺 ffmpeg / ffprobe」的分支。 */
+function bareEnv(root) {
+  const empty = path.join(root, 'empty-path')
+  fs.mkdirSync(empty, { recursive: true })
+  return { PATH: empty, H5VIDEO_TOOLS_DIR: path.join(root, 'no-tools') }
 }
 
 test('check-env --json 返回稳定结构，且 work_root 等于会话工作区', async () => {
@@ -65,7 +72,7 @@ test('scaffold 生成骨架，plan 只打印预估时间轴', async () => {
     const project = path.join(root, 'proj')
     const scaffold = await h5video(['scaffold', project], root)
     assert.equal(scaffold.code, 0, scaffold.stderr)
-    for (const rel of ['animation.html', 'build.mjs', 'storyboard.cjs', 'script.json', 'out', 'work', 'tools']) {
+    for (const rel of ['animation.html', 'build.mjs', 'storyboard.cjs', 'script.json', 'qa-tts-audio.cjs', 'tts-win.ps1', 'out', 'work', 'tools']) {
       assert.ok(fs.existsSync(path.join(project, rel)), '骨架缺少：' + rel)
     }
     assert.ok(fs.existsSync(path.join(project, 'vendor', 'katex', 'katex.min.js')))
@@ -81,6 +88,39 @@ test('scaffold 生成骨架，plan 只打印预估时间轴', async () => {
     assert.ok(plan.stdout.includes('预估时间轴'))
     assert.ok(plan.stdout.includes('30fps'))
     assert.ok(!plan.stdout.includes('chromium'), 'plan 不应启动浏览器')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('doctor 给出分级自检报告，且缺件时给修复命令、不擅自安装', async () => {
+  const root = makeWorkRoot()
+  try {
+    const result = await h5video(['doctor', '--json'], root)
+    const report = JSON.parse(result.stdout)
+    assert.equal(report.schema, 1)
+    assert.equal(typeof report.ready, 'boolean')
+    assert.ok(Array.isArray(report.blocking) && Array.isArray(report.degradable) && Array.isArray(report.checks))
+    const ids = report.checks.map((c) => c.id)
+    for (const id of ['node', 'skill-layout', 'workspace', 'ffmpeg', 'ffprobe', 'browser', 'tts', 'cjk-font']) {
+      assert.ok(ids.includes(id), '自检缺少检查项：' + id)
+    }
+    for (const item of report.blocking) {
+      assert.ok(item.why, 'blocking 项必须说明为什么必须：' + item.id)
+      assert.ok(Array.isArray(item.fix) && item.fix.length > 0, 'blocking 项必须给出修复动作：' + item.id)
+    }
+    // 空 PATH 环境：必须报出缺失的二进制，并给出按平台的修复命令
+    const bare = await h5video(['doctor', '--json'], root, bareEnv(root))
+    const bareReport = JSON.parse(bare.stdout)
+    const missing = bareReport.blocking.map((i) => i.id)
+    assert.ok(missing.includes('ffmpeg') || missing.includes('ffprobe'), '空环境应报出缺失的二进制：' + JSON.stringify(missing))
+    const ffmpegItem = bareReport.blocking.find((i) => i.id === 'ffmpeg' || i.id === 'ffprobe')
+    assert.ok(ffmpegItem.fix.some((step) => step.includes('install-tools')), '修复命令应指向 install-tools 脚本：' + JSON.stringify(ffmpegItem.fix))
+    // --fix 不带 --yes：只打印将执行的命令并退 3，不得真的下载
+    const plan = await h5video(['doctor', '--fix'], root, bareEnv(root))
+    assert.equal(plan.code, 3, '未确认的安装计划必须退 3：' + plan.stdout)
+    assert.ok(plan.stdout.includes('即将执行'))
+    assert.ok(!fs.existsSync(path.join(root, 'tools')), '--fix 不带 --yes 不得真的安装')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

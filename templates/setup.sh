@@ -12,7 +12,7 @@ fi
 
 mkdir -p "$DST/tools" "$DST/out" "$DST/work"
 
-for f in animation.html build.mjs storyboard.cjs script.json; do
+for f in animation.html build.mjs storyboard.cjs script.json qa-tts-audio.cjs tts-win.ps1; do
   if [ -f "$DST/$f" ]; then
     echo "跳过已存在: $f"
   else

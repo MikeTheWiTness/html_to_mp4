@@ -1,17 +1,46 @@
 # 流水线细节
 
-## 1. 环境探测
+## 1. 环境探测（阶段零）
 
-先确认这几样东西在不在，缺什么补什么：
+**开工前先自检**，不要让缺件在出片阶段才暴露。插件会话里用 `h5video doctor`，没有插件时按下面的手工清单查。
 
 ~~~bash
-which say node                          # macOS 语音合成 / Node 18+
-ls ~/Library/Caches/ms-playwright | grep chromium   # 无头浏览器
-node -e "require.resolve('playwright-core')"        # 浏览器驱动
-./tools/ffmpeg -encoders | grep -E "libx264| aac "  # MP4 编码能力
+h5video doctor              # 人类可读：✓ / ✗blocking / ⚠可降级，每项带修复命令
+h5video doctor --json       # 结构化：ready / blocking[] / degradable[] / checks[]
+h5video doctor --fix        # 只打印将执行的安装命令（不改动任何东西），退 3
+h5video doctor --fix --yes  # 真的下载安装，装完自动复检
 ~~~
 
-关键结论（本机实测）：
+`doctor` 的分级：
+
+| 级别 | 检查项 | 缺了会怎样 |
+| --- | --- | --- |
+| blocking | `node`≥18、`skill-layout`、`workspace` 可写、`ffmpeg`、`ffprobe`、`browser`（Chromium + playwright-core） | 出不了片 / 分镜 |
+| degradable | `tts`（无 compact 中文音色）、`cjk-font`（中文变方框）、`disk`（录制中途失败） | 降级：无声片、外部 TTS + `--reuse-tts` |
+| 信息 | `mirror`（`H5VIDEO_MIRROR` / `npm_config_registry`） | — |
+
+**自动化约定**：`doctor` 默认只报告；要真的装必须显式 `--fix --yes`（只用 `--fix` 只打印命令并退 3，和 `build` 的 `--approved` 是同一套闸门思路）。agent 拿到 `blocking` 后应先向用户说明「缺什么 / 为什么必须 / 下多少 MB / 要不要联网」，征得同意再装，装完复检并把报告留档到 `work/env-report.json`。
+
+手工清单（没有插件时）：
+
+~~~bash
+which say node                                      # macOS 语音合成 / Node 18+
+ls ~/Library/Caches/ms-playwright | grep chromium    # 无头浏览器（Windows 在 %LOCALAPPDATA%\ms-playwright）
+node -e "require.resolve('playwright-core')"         # 浏览器驱动：版本必须与上面的 chromium-<revision> 一致
+./tools/ffmpeg -encoders | grep -E "libx264| aac "    # MP4 编码能力
+say -v Tingting -o /tmp/t.aiff 测试 && rm -f /tmp/t.aiff   # compact 中文音色可用（say -v '?' 不列它）
+~~~
+
+关键结论（实测）：
+
+- Playwright 自带的 `ffmpeg-mac` 是**阉割版**：只有 libvpx_vp8 / webm，没有 libx264、没有 aac，连 adelay/apad 过滤器都没有，**出不了 MP4**。必须另配全功能 ffmpeg。
+- **Chromium 修订号与 playwright-core 版本必须配对**：`chromium-1228` 只对应 `playwright-core@1.61.0`（1.59→1217、1.60→1223、1.62→1234、1.64alpha→1246 都对不上）。不配对时报的是「找不到 playwright-core」或 `Executable doesn't exist ... chromium_headless_shell-####`。`doctor` 会读各候选的 `browsers.json` 算出该装哪个版本，也可以 `doctor --fix --yes --playwright-core 1.61.0` 指定。
+- ffmpeg / ffprobe 必须是**本机架构**的静态版：架构不符时可能「可执行但一跑就挂」，报 `Bad CPU type in executable` 或 `Unknown system error -86`。`install-tools.sh` / `.ps1` 会按架构重下并实际跑一次 `-version` 自检。
+- **中文音色分两类**：`say -v '?'` 里带括号的「X (中文（中国大陆）)」是 eloquence 类，写文件时每约 1.7 s 丢约 300 ms 音频块（成片听感即卡顿）；compact（`Tingting` / `Meijia`）干净。`Tingting` **不在 `say -v '?'` 输出里**，但 `say -v Tingting` 可用，`doctor` 会直接探它。
+- **Windows 没有 `say`**：用 `tts-win.ps1`（`System.Speech` / SAPI 本地合成 → `work/segN.aiff`）后 `build --approved --reuse-tts`；SAPI 里要有中文（简体，中国）人声。
+- **内网 / 镜像**：`H5VIDEO_MIRROR` 指向一个扁平目录（文件名约定见 `tools/install-tools.sh` 头部注释），npm 相关走 `npm_config_registry`。
+以下是逐条细节（含历史踩坑）：
+
 
 - Playwright 自带的 `ffmpeg-mac` 是**阉割版**：只有 libvpx_vp8 / webm，没有 libx264、没有 aac，连 adelay/apad 过滤器都没有，**出不了 MP4**。必须另配一个全功能 ffmpeg。
 - `playwright-core` 可以从任何已安装它的项目里 require：`createRequire(import.meta.url)` 后 `require('<绝对路径>/playwright-core')`。build.mjs 用环境变量 `PW_CORE` 覆盖。
@@ -57,7 +86,7 @@ arch -arm64 /opt/homebrew/bin/brew install ffmpeg
 | width / height | 1280 / 720 | 画布与视口尺寸，必须与 animation.html 的 canvas 一致 |
 | voice | Tingting | `say` 音色；`say -v '?'` 查全部 |
 | rate | 178 | 语速。中文约 4–5 字/秒；调大更快 |
-| cps | 4.5 | 预估语速（字/秒），**只用于阶段一出分镜时的时长预估**；成片时长以 TTS 实测为准 |
+| cps | 4.5 | 预估语速（字/秒），**只用于阶段二分镜时长预估**；成片时长以 TTS 实测为准 |
 | lead | 0.35 | 每段画面开头留白，旁白晚于画面出现（秒） |
 | tail | 0.6 | 每段画面结尾留白，给观众喘息（秒） |
 | minDur | 2.4 | 单段最短时长，防止短句一闪而过 |
@@ -84,9 +113,9 @@ window.__ready = true;                                                          
 - **截图前必须等字体就绪**：storyboard.cjs 与 build.mjs 都会 `await page.evaluate(() => document.fonts.ready)`，否则首帧可能落在 fallback 字体上。
 - KaTeX 放在项目 `vendor/katex/`（`katex.min.js` + `katex-inline.css`，woff2 已 base64 内联，约 0.35MB）：完全离线，`file://` 下没有字体 CORS 问题。重做这份 CSS 的办法见 [scene-cookbook.md](scene-cookbook.md) 第 11 节。
 
-## 5. storyboard.cjs（阶段一：审核）
+## 5. storyboard.cjs（阶段二：HTML 审核）
 
-**出片之前必须跑它**，把画面交人确认：
+先完成并取得用户对 `design.md` 的明确确认，再制作 HTML。HTML/分镜审核是第二道闸门；出片前必须跑它，把画面交人确认：
 
 ~~~bash
 node storyboard.cjs                # 每场景自动抽 2 帧（25% / 75% 处）-> work/storyboard/
@@ -101,11 +130,11 @@ node storyboard.cjs --plan         # 只打印预估时间轴（不开浏览器�
 2. 把这条预估时间轴通过 `addInitScript` 注入页面，所以分镜里的场景边界与最终成片基本一致（差异通常 ±1 秒内）。
 3. 渲染分镜 PNG 到 `work/storyboard/`，命名 `场景NN_<id>_<秒>s.png`。
 
-审核时把**分镜图**和 **animation.html**（浏览器打开即自动播放）一起交给对方。收到明确同意后再进阶段二。
+审核时把**分镜图**、**animation.html**和语音预览一起交给对方。收到明确同意后才进阶段三。
 
-## 6. build.mjs 每步在做什么（阶段二）
+## 6. build.mjs 每步在做什么（阶段三）
 
-**闸门**：没有 `--approved` 会打印提示并 `exit 2`。这是刻意设计的——画面未经人工确认就不该花算力编码。
+**闸门**：没有 `--approved` 会打印提示并 `exit 2`。这是刻意设计的——设计方案和 HTML/分镜未经人工确认就不该花算力编码。
 
 1. **TTS**：`say -v Tingting -r 178 -o work/segN.aiff "<文本>"`。
 2. **量时长**：`ffprobe -show_entries format=duration -of default=nw=1:nk=1`（比正则解析 `ffmpeg -i` 的 stderr 稳）。
@@ -188,8 +217,8 @@ node storyboard.cjs --plan         # 只打印预估时间轴（不开浏览器�
 h5video check-env --json            # 环境体检（ffmpeg / ffprobe / say / Chromium / skill 布局）
 h5video scaffold <目录>              # 从随包 templates 生成项目骨架，不覆盖已有文件
 h5video plan <项目>                  # 只打印预估时间轴
-h5video storyboard <项目>            # 阶段一：出分镜图，交人审核
-h5video build <项目> --approved      # 阶段二：出片（没有 --approved 由脚本 exit 2 拦下）
+h5video storyboard <项目>            # 阶段二：出分镜图，交人审核
+h5video build <项目> --approved      # 阶段三：出片（没有 --approved 由脚本 exit 2 拦下）
 h5video probe <成品.mp4>             # 出片校验：ffprobe JSON，看 h264 + aac 两路流
 h5video voices                     # say 音色列表（默认只看中文）
 ~~~

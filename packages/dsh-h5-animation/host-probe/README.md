@@ -10,6 +10,28 @@
    `dsh.profile.bundles` 与 `dependencies` 都登记了本包。
 3. **新开**会话选「H5 动画视频」preset（改过 JS 模块后必须重启宿主才会加载新代际）。
 
+## 1.5 阶段零：环境自检（新会话第一件事）
+
+1. 调 `h5video`，`args: ["doctor", "--json"]`：
+   - 返回 JSON 必须含 `schema` / `ready` / `blocking[]` / `degradable[]` / `checks[]`；
+   - 每个 `blocking` 项都要带 `why`（为什么必须）与 `fix[]`（按当前平台的修复命令）；
+   - `checks[].id` 至少包含 node / skill-layout / workspace / ffmpeg / ffprobe / browser / tts / cjk-font。
+2. **缺件必须问用户**：模拟缺件（把 `PATH` 换成空目录跑一次），确认 agent 会把「缺什么 / 为什么必须 / 下多少 MB / 要不要联网」讲清楚
+   并等用户同意，而不是直接下载。
+3. `doctor --fix`（不带 `--yes`）必须退出码 3 且只打印命令；`doctor --fix --yes` 才实际安装，装完自动复检。
+4. 自检通过后，`doctor` 应报出本机 compact 中文音色（macOS: Tingting/Meijia）与匹配的 playwright-core 版本。
+
+## 1.6 Windows 手工验收（没有实机 CI，照这张表走）
+
+| 步骤 | 命令 | 期望 |
+| --- | --- | --- |
+| 依赖 | `powershell -ExecutionPolicy Bypass -File tools\install-tools.ps1 -TargetDir <工作区>\tools` | 下到 ffmpeg.exe / ffprobe.exe 并各打印一行 `-version` |
+| 自检 | `h5video doctor` | `tts` 项报出 SAPI 中文人声（如 Microsoft Huihui）；缺则提示去「设置 → 时间和语言 → 语音」加 |
+| 骨架 | `h5video scaffold 演示项目` | 生成 animation.html / build.mjs / storyboard.cjs / script.json / qa-tts-audio.cjs / tts-win.ps1 |
+| 旁白 | `powershell -ExecutionPolicy Bypass -File 演示项目\tts-win.ps1` | 生成 `work\seg0..N.aiff`；无中文人声时给出可执行的安装提示而不是堆栈 |
+| 出片 | `h5video build 演示项目 --approved --reuse-tts` | 产出 `out\*.mp4`（H.264 + AAC，旁白来自 SAPI） |
+| 体检 | `node 演示项目\qa-tts-audio.cjs 演示项目\work\seg*.aiff` | 每个文件 `hardCuts: 0` |
+
 ## 2. skill 与工具挂载
 
 1. 会话 skill 目录里应出现 `h5-animation-video`；加载它返回 SKILL.md 正文。
@@ -20,18 +42,17 @@
 3. 打开独立工作区 A，`work_root` 应等于 A；同一宿主打开独立工作区 B，重复调用，
    `work_root` 应等于 B 且不同于 A。两次都不传 `cwd`，才能检验真实会话注入。
 
-## 3. 两阶段流程
+## 3. 三阶段流程
 
-1. 在工作区 A 调 `args: ["scaffold", "演示项目"]`，确认生成
+1. 在工作区 A 先编写详细 `design.md`，包含课程目标/边界、教学顺序、逐场景画面与旁白、时长及输出规格；交给需求方审阅。未获得明确确认前，不调用 `scaffold`，不创建/生成最终 HTML，不运行 storyboard/build。
+2. 收到方案明确确认后，调 `args: ["scaffold", "演示项目"]`，确认生成
    `animation.html / storyboard.cjs / build.mjs / script.json / vendor/katex/ / out/ / work/`，
    且 `tools/` 下链上了可用的 ffmpeg / ffprobe；重复调用不覆盖已有文件。
-2. `args: ["plan", "演示项目"]` 只打印预估时间轴，不开浏览器。
-3. `args: ["storyboard", "演示项目"]` 出分镜图到 `演示项目/work/storyboard/`，
-   页面无 JS 错误；把分镜图 + `animation.html` 交给需求方审核（这就是阶段一交付物）。
-4. **闸门**：`args: ["build", "演示项目"]` 必须 `exitCode: 2` 且提示"尚未审核通过"。
-   这条要在 preset 会话里确认 agent 不会绕过。
-5. 审核通过后 `args: ["build", "演示项目", "--approved"]`：产出 `out/*.mp4`；
-   终端应能看到 `say` 逐段合成、逐帧进度、编码与混流日志，`work/timeline.json` 落盘。
+3. `args: ["plan", "演示项目"]` 只打印预估时间轴，不开浏览器。
+4. `args: ["storyboard", "演示项目"]` 出分镜图到 `演示项目/work/storyboard/`，
+   页面无 JS 错误；把分镜图、`animation.html` 和语音预览交给需求方审核（阶段二交付物）。
+5. **闸门**：HTML/分镜/语音未获明确确认前，`args: ["build", "演示项目"]` 必须 `exitCode: 2` 且提示"尚未审核通过"；preset agent 不得自行假定批准。
+6. 阶段二审核通过后，调 `args: ["build", "演示项目", "--approved"]`：产出 `out/*.mp4`；终端应能看到 `say` 逐段合成、逐帧进度、编码与混流日志，`work/timeline.json` 落盘。
 
 ## 4. 出片校验（照 skill 的清单做）
 

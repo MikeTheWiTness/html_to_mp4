@@ -8,6 +8,8 @@
  *
  * 子命令：
  *   check-env [--json]                环境体检（ffmpeg / ffprobe / say / Chromium / skill 布局）
+ *   doctor [--json] [--fix [--yes]]   阶段零自检：分级列出缺件与修复命令，--fix --yes 才真的安装
+ *                                     --playwright-core <版本> 指定要装的 playwright-core 版本
  *   scaffold <目录>                    从随包 templates 生成项目骨架（不覆盖已有文件）
  *   plan <项目>                        只打印预估时间轴（不开浏览器）
  *   storyboard <项目> [参数...]        阶段一：出分镜图，交人审核
@@ -22,6 +24,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { runDoctor, browserSummary } from './doctor.mjs'
 
 const NL = String.fromCharCode(10)
 const HERE = path.dirname(fileURLToPath(import.meta.url))          // <包>/tools
@@ -265,6 +268,19 @@ async function cmdCheckEnv(argv) {
   if (!layout.templates) warnings.push('随包 templates 缺失：本包可能被不完整地复制。')
   if (ffmpeg.path && !ffprobe.path) warnings.push('ffmpeg 可用但 ffprobe 不可用：时长测量与出片校验都会失败，务必先修好 ffprobe。')
 
+  // 本次实测踩到的两个坑：浏览器/core 版本不匹配、eloquence 音色写文件丢块
+  const browser = browserSummary(WORK_ROOT)
+  if (playwright.browsers.length && !browser.match) {
+    warnings.push('Chromium 与 playwright-core 版本不匹配（浏览器 ' + playwright.browsers.join('、') +
+      '，可用 core ' + (browser.cores.length ? browser.cores.map((c) => c.version + '→' + c.revision).join('、') : '无') +
+      '）：storyboard / build 会报「找不到 playwright-core」。跑 h5video doctor 看修复命令。')
+  }
+  const eloquenceVoices = zhVoices.filter((v) => /\(中文/.test(v.name))   // say 里的 "X (中文（中国大陆）)" 都是 eloquence 类
+  if (eloquenceVoices.length) {
+    warnings.push('中文音色里有 ' + eloquenceVoices.length + ' 个 eloquence 类（' + eloquenceVoices.slice(0, 3).map((v) => v.name).join('、') +
+      '）：写文件时每约 1.7 s 丢约 300 ms 音频块，成片语音会卡顿。改用 compact 音色（Tingting / Meijia），或先跑 h5video doctor 看本机可用的干净音色。')
+  }
+
   const report = {
     ok: Boolean(ffmpeg.path && ffprobe.path && layout.templates && (isWin || say) && playwright.browsers.length > 0),
     work_root: WORK_ROOT,
@@ -320,7 +336,7 @@ async function cmdScaffold(argv) {
   const dst = underWorkRoot(target)
   const log = { created: [], skipped: [], linked: [], warned: [] }
   for (const dir of ['', 'out', 'work', 'tools']) fs.mkdirSync(path.join(dst, dir), { recursive: true })
-  for (const name of ['animation.html', 'build.mjs', 'storyboard.cjs', 'script.json']) {
+  for (const name of ['animation.html', 'build.mjs', 'storyboard.cjs', 'script.json', 'qa-tts-audio.cjs', 'tts-win.ps1']) {
     copyIfAbsent(path.join(TEMPLATES, name), path.join(dst, name), log)
   }
   const vendorFrom = path.join(TEMPLATES, 'vendor')
@@ -422,7 +438,26 @@ async function cmdVoices(argv) {
   if (!all) voices = voices.filter((v) => v.locale.toLowerCase().startsWith('zh'))
   if (query) voices = voices.filter((v) => (v.name + ' ' + v.locale + ' ' + v.sample).toLowerCase().includes(query))
   write('say 音色' + (all ? '（全部）' : '（中文）') + '，共 ' + voices.length + ' 个：')
-  for (const voice of voices) write('  ' + voice.name.padEnd(28) + voice.locale.padEnd(10) + voice.sample)
+  for (const voice of voices) {
+    // eloquence 类（say 列表里带「(中文（中国大陆）)」的那些）写文件会每隔约 1.7 s 丢约 300 ms，绝对不能用来出片
+    const risky = /\(中文/.test(voice.name)
+    write('  ' + voice.name.padEnd(28) + voice.locale.padEnd(10) + (risky ? '⚠ 会丢块，勿用于出片   ' : '                      ') + voice.sample)
+  }
+  // compact 音色（Tingting 等）不出现在 say -v '?' 里，但 say -v <名字> 可用，必须单独探一次
+  const probes = []
+  for (const name of ['Tingting', 'Meijia', 'Sinji']) {
+    const probeFile = path.join(os.tmpdir(), 'h5video-voice-probe-' + name + '.aiff')
+    const result = await run(say, ['-v', name, '-r', '178', '-o', probeFile, '测'])
+    const usable = result.code === 0 && isExecutableFile(probeFile)
+    try { fs.unlinkSync(probeFile) } catch { /* 忽略 */ }
+    if (usable) probes.push(name)
+  }
+  if (probes.length && !query) {
+    write('')
+    write('compact 中文音色（推荐出片用，say -v \'?\' 不列出它们）：')
+    for (const name of probes) write('  ' + name.padEnd(28) + '✓ 写文件无丢块')
+    write('  用法：把名字填进 script.json 的 voice（例如 "voice": "' + probes[0] + '"）')
+  }
   write('')
   write('把选中的名字填进 script.json 的 voice 字段（注意脚本按名字精确匹配）。')
   return 0
@@ -434,6 +469,8 @@ function help() {
   write('用法: h5video <子命令> [参数...]')
   write('')
   write('  check-env [--json]                环境体检（ffmpeg / ffprobe / say / Chromium / skill 布局）')
+  write('  doctor [--json] [--fix [--yes]]   阶段零自检：分级缺件 + 修复命令；--fix --yes 才真的安装')
+  write('                                    --playwright-core <版本> 指定要装的 playwright-core 版本')
   write('  scaffold <目录>                    从随包 templates 生成项目骨架（不覆盖已有文件）')
   write('  plan <项目>                        只打印预估时间轴（不开浏览器）')
   write('  storyboard <项目> [--shots N] [--at t...]   阶段一：出分镜图，交人审核')
@@ -451,6 +488,18 @@ async function main() {
   const rest = argv.slice(1)
   switch (command) {
     case 'check-env': return cmdCheckEnv(rest)
+    case 'doctor': {
+      const idx = rest.indexOf('--playwright-core')
+      return runDoctor({
+        json: rest.includes('--json'),
+        fix: rest.includes('--fix'),
+        yes: rest.includes('--yes'),
+        playwrightCoreVersion: idx >= 0 ? String(rest[idx + 1] || '') : '',
+        workRoot: WORK_ROOT,
+        skillDir: SKILL_DIR,
+        templates: TEMPLATES,
+      })
+    }
     case 'scaffold': return cmdScaffold(rest)
     case 'plan': return runPipeline('storyboard.cjs', rest.length ? [rest[0], '--plan', ...rest.slice(1)] : rest, { resolveTools: false })
     case 'storyboard': return runPipeline('storyboard.cjs', rest, { resolveTools: false })

@@ -30,8 +30,8 @@
   - `skill-filesystem` 的 `customSkillDirs` 指向本包 `skills/`，所以 h5-animation-video skill
     只在这个 preset 的会话里可见（DSH 的 skill 发现按 preset 分层）；
   - `./tools/index.js` 注册原生工具 `h5video`；
-  - persona 里写死**两阶段闸门**：阶段一只出 `animation.html` + 分镜图交人审核，
-    对方明确同意前不调用 `build`，`--approved` 不是可以绕过的形式。
+  - persona 中写入课程范围与演示节奏要求：高中同步课程不提前讲后续知识；不同情况先分开演示、末尾按需比较；动画单次播放后停止；阶段二 HTML 带默认中文语音试听。
+  - persona 里写死**三阶段闸门**：先交 `design.md` 详细方案，用户明确确认前不生成 HTML；方案确认后再交带语音预览的 `animation.html` + 分镜审核；HTML 审核明确同意前不调用 `build`，`--approved` 不是可以绕过的形式。
 - **原生工具 `h5video`**：参数 `args: string[]` 原样透传给 CLI，返回
   `exitCode / stdout / stderr / truncated`。它走宿主平面的 `ctx.subprocess`（子进程服务会清洗环境变量），
   不是 bash；每次调用从会话读取工作区作为 cwd，并注入 `H5VIDEO_WORK_ROOT`。
@@ -42,8 +42,8 @@
   | `check-env [--json]` | ffmpeg / ffprobe / `say` / Chromium / skill 布局体检。`--json` 输出含 `work_root`、`ok`、`warnings` |
   | `scaffold <目录>` | 从随包 templates 生成项目骨架（不覆盖已有文件），并把可用的 ffmpeg / ffprobe 链进项目 `tools/` |
   | `plan <项目>` | 只打印预估时间轴（不开浏览器、不需要 ffmpeg） |
-  | `storyboard <项目> [--shots N] [--at t...]` | 阶段一：按预估时间轴出分镜图，交人审核 |
-  | `build <项目> --approved [--reuse-tts] [--keep-frames]` | 阶段二：TTS → 逐帧定格录制 → H.264 编码 → 混流（没有 `--approved` 由脚本 exit 2 拦下） |
+  | `storyboard <项目> [--shots N] [--at t...]` | 阶段二：按预估时间轴出分镜图，交人审核 |
+  | `build <项目> --approved [--reuse-tts] [--keep-frames]` | 阶段三：TTS → 逐帧定格录制 → H.264 编码 → 混流（没有 `--approved` 由脚本 exit 2 拦下） |
   | `probe <媒体文件>` | ffprobe 结构化探测（JSON），用于出片校验 |
   | `voices [--query 文本] [--all]` | `say` 音色列表（默认只看中文），填进 `script.json` 的 `voice` |
 
@@ -89,7 +89,7 @@
 4. 验证工具：调用 `h5video`，`args: ["check-env", "--json"]`，确认 `ok`、`work_root` 等于当前工作区、
    `skill.dir` 指向本包 `skills/h5-animation-video`。
 5. 开一个新工作区再调一次，确认 `work_root` 跟着变（检验会话注入，而不是宿主进程 cwd）。
-6. 完整走一遍两阶段流程，见 [host-probe/README.md](host-probe/README.md)。
+6. 完整走一遍三阶段流程，见 [host-probe/README.md](host-probe/README.md)。
 
 ## 配置（profile patch 按行 id 覆盖）
 

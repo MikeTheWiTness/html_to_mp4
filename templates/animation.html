@@ -10,12 +10,14 @@
   canvas{display:block;width:1280px;height:720px}
   #math{position:absolute;left:0;top:0;width:1280px;height:720px;pointer-events:none}
   #math .f{position:absolute;left:0;top:0;opacity:0;white-space:nowrap;will-change:opacity,transform}
+  #replay{position:absolute;right:24px;top:24px;padding:8px 14px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;color:#0f172a;font:500 16px "PingFang SC",sans-serif;cursor:pointer}
 </style>
 </head>
 <body>
 <div id="stage">
   <canvas id="cv" width="1280" height="720"></canvas>
   <div id="math"></div>
+  <button id="replay" type="button" title="重播动画">重播</button>
 </div>
 <script src="vendor/katex/katex.min.js"></script>
 <script>
@@ -282,7 +284,7 @@
 
   /* ---------- 渲染：背景 + 交叉淡入 + 当前场景 + 公式层 + 进度条 ---------- */
   function render(t) {
-    t = ((t % TOTAL) + TOTAL) % TOTAL;
+    t = clamp(t, 0, TOTAL);
     bg(t);
     var idx = 0;
     for (var i = 0; i < SEG.length; i++) { if (t >= SEG[i].start) idx = i; }
@@ -313,17 +315,26 @@
   var raf = null, t0 = null;
   function loop(ts) {
     if (t0 === null) t0 = ts;
-    render((ts - t0) / 1000);
+    var t = (ts - t0) / 1000;
+    render(t);
+    if (t < TOTAL) raf = requestAnimationFrame(loop);
+    else raf = null;
+  }
+  function play() {
+    if (raf !== null) cancelAnimationFrame(raf);
+    t0 = null;
     raf = requestAnimationFrame(loop);
   }
   window.__seek = function (t) {
     if (raf !== null) { cancelAnimationFrame(raf); raf = null; }
     render(t);
   };
+  document.getElementById('replay').addEventListener('click', play);
+  window.__play = play;
   window.__meta = { total: TOTAL, segments: SEG };
   window.__ready = true;
   render(0);
-  raf = requestAnimationFrame(loop);
+  play();
 })();
 </script>
 </body>

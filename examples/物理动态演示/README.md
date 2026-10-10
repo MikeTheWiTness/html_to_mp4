@@ -1,6 +1,6 @@
 # 样例：物理动态演示
 
-42 秒成品，5 个场景，中文旁白。用来对照"什么样的画面算是合格的"，也用来对照两阶段流程各自该交付什么。
+42 秒成品，5 个场景，中文旁白。用来对照画面质量，并示范三阶段流程中的 HTML/分镜审核与 MP4 出片阶段。新项目应先完成 `design.md` 并取得确认，再制作 HTML。
 
 公式全部是 **LaTeX 真排版**：`y = \frac{1}{2} g t^2`（真上下标与分数）、`T = 2\pi\sqrt{\dfrac{m}{k}}`（带横线的根号套分式）、`F = \dfrac{m v^2}{r}`、`v = \dfrac{2\pi r}{T}`，矢量标签 `v_x`、`v_y`、`F`、`r`、`m` 也都是 TeX 斜体数学字体，并且跟着箭头/滑块逐帧移动。
 
@@ -21,8 +21,8 @@
 ~~~bash
 cd 物理动态演示
 mkdir -p tools && ln -sf ../../tools/ffmpeg tools/ffmpeg && ln -sf ../../tools/ffprobe tools/ffprobe
-node ../../templates/storyboard.cjs                      # 阶段一：出分镜
-node ../../templates/build.mjs --approved                # 阶段二：出片
+node ../../templates/storyboard.cjs                      # 阶段二：方案确认后出分镜
+node ../../templates/build.mjs --approved                # 阶段三：HTML 审核通过后出片
 ~~~
 
 ## 这个样例做对了几件事
