@@ -3,5 +3,6 @@ node_modules/
 tools/
 work/*.wav
 work/frames/
+work/video.mp4
 work/audio-list.txt
 work/qa-tts-audio.cjs
