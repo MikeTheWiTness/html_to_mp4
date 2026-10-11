@@ -13,6 +13,7 @@
  *   scaffold <目录>                    从随包 templates 生成项目骨架（不覆盖已有文件）
  *   plan <项目>                        只打印预估时间轴（不开浏览器）
  *   storyboard <项目> [参数...]        阶段一：出分镜图，交人审核
+ *   qa <项目> [--static] [--strict]   公式与画面体检，产出 work/qa/report.json（出片闸门）
  *   build <项目> --approved [参数...]  阶段二：TTS → 逐帧录制 → 编码 → 混流
  *   probe <媒体文件>                   ffprobe 结构化探测（JSON）
  *   voices [--query 文本] [--all]      say 音色列表（默认只看中文）
@@ -336,7 +337,7 @@ async function cmdScaffold(argv) {
   const dst = underWorkRoot(target)
   const log = { created: [], skipped: [], linked: [], warned: [] }
   for (const dir of ['', 'out', 'work', 'tools']) fs.mkdirSync(path.join(dst, dir), { recursive: true })
-  for (const name of ['animation.html', 'build.mjs', 'storyboard.cjs', 'script.json', 'qa-tts-audio.cjs', 'tts-win.ps1']) {
+  for (const name of ['animation.html', 'build.mjs', 'storyboard.cjs', 'script.json', 'qa-tts-audio.cjs', 'qa-katex.cjs', 'qa-frames.cjs', 'qa.cjs', 'tts-win.ps1']) {
     copyIfAbsent(path.join(TEMPLATES, name), path.join(dst, name), log)
   }
   const vendorFrom = path.join(TEMPLATES, 'vendor')
@@ -377,15 +378,18 @@ async function cmdScaffold(argv) {
   write('')
   write('两阶段流程：')
   write('  1) 改 ' + path.join(dst, 'script.json') + ' 写旁白，改 animation.html 写画面')
-  write('  2) h5video storyboard ' + dst + '        # 出分镜，交人审核')
-  write('  3) h5video build ' + dst + ' --approved  # 审核通过后出片')
+  write('  2) h5video qa ' + dst + '                # 公式与画面体检（出片闸门）')
+  write('  3) h5video storyboard ' + dst + '        # 出分镜，交人审核')
+  write('  4) h5video build ' + dst + ' --approved  # 审核通过后出片')
   return 0
 }
 
 async function runPipeline(scriptName, argv, options = {}) {
   const usage = scriptName === 'build.mjs'
-    ? '用法: h5video build <项目> --approved [--reuse-tts] [--keep-frames]'
-    : '用法: h5video storyboard <项目> [--shots N] [--at t...]'
+    ? '用法: h5video build <项目> --approved [--reuse-tts] [--keep-frames] [--skip-qa]'
+    : scriptName === 'qa.cjs'
+      ? '用法: h5video qa <项目> [--static] [--strict] [--json]'
+      : '用法: h5video storyboard <项目> [--shots N] [--at t...]'
   const target = argv[0]
   if (!target || target.startsWith('--')) { writeErr(usage); return 1 }
   const project = underWorkRoot(target)
@@ -474,7 +478,8 @@ function help() {
   write('  scaffold <目录>                    从随包 templates 生成项目骨架（不覆盖已有文件）')
   write('  plan <项目>                        只打印预估时间轴（不开浏览器）')
   write('  storyboard <项目> [--shots N] [--at t...]   阶段一：出分镜图，交人审核')
-  write('  build <项目> --approved [--reuse-tts]       阶段二：TTS → 逐帧录制 → 编码 → 混流')
+  write('  qa <项目> [--static] [--strict]    阶段二/三：公式与画面体检，产出 work/qa/report.json')
+  write('  build <项目> --approved [--reuse-tts] [--skip-qa]   阶段二：TTS → 逐帧录制 → 编码 → 混流')
   write('  probe <媒体文件>                   ffprobe 结构化探测（JSON）')
   write('  voices [--query 文本] [--all]      say 音色列表（默认只看中文）')
   write('')
@@ -503,6 +508,7 @@ async function main() {
     case 'scaffold': return cmdScaffold(rest)
     case 'plan': return runPipeline('storyboard.cjs', rest.length ? [rest[0], '--plan', ...rest.slice(1)] : rest, { resolveTools: false })
     case 'storyboard': return runPipeline('storyboard.cjs', rest, { resolveTools: false })
+    case 'qa': return runPipeline('qa.cjs', rest, { resolveTools: false })
     case 'build': return runPipeline('build.mjs', rest)
     case 'probe': return cmdProbe(rest)
     case 'voices': return cmdVoices(rest)

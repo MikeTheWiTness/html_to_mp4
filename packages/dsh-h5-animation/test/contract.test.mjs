@@ -98,8 +98,14 @@ test('skill 与 HTML 模板明确课程顺序、旁白预览和单次播放', ()
   assert.match(skill, /Linux 不保证/)
   assert.match(skill, /eloquence/)
   assert.match(skill, /qa-tts-audio\.cjs/)
+  assert.match(skill, /qa-katex\.cjs/)
+  assert.match(skill, /qa-frames\.cjs/)
+  assert.match(skill, /出片前体检（qa）/)          // 体检一节必须写进 skill
+  assert.match(skill, /h5video qa/)                  // 插件入口也要暴露
   assert.match(skill, /tts-win\.ps1/)
   assert.match(html, /id="replay"/)
+  assert.match(html, /window\.__MATH\s*=/)           // 公式体检依赖这个出口
+  assert.match(html, /window\.__SCENES\s*=/)
   assert.match(html, /if \(t < TOTAL\) raf = requestAnimationFrame\(loop\)/)
   assert.ok(!html.includes('t % TOTAL'), '模板不得自动循环播放')
 })
@@ -153,6 +159,9 @@ test('随包 skill 带上了流程必需的文件，且不夹带静态二进制'
     'templates/script.json',
     'templates/setup.sh',
     'templates/qa-tts-audio.cjs',
+    'templates/qa-katex.cjs',
+    'templates/qa-frames.cjs',
+    'templates/qa.cjs',
     'templates/tts-win.ps1',
     'templates/vendor/katex/katex.min.js',
     'templates/vendor/katex/katex-inline.css',

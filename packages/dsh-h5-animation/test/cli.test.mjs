@@ -72,7 +72,7 @@ test('scaffold 生成骨架，plan 只打印预估时间轴', async () => {
     const project = path.join(root, 'proj')
     const scaffold = await h5video(['scaffold', project], root)
     assert.equal(scaffold.code, 0, scaffold.stderr)
-    for (const rel of ['animation.html', 'build.mjs', 'storyboard.cjs', 'script.json', 'qa-tts-audio.cjs', 'tts-win.ps1', 'out', 'work', 'tools']) {
+    for (const rel of ['animation.html', 'build.mjs', 'storyboard.cjs', 'script.json', 'qa-tts-audio.cjs', 'qa-katex.cjs', 'qa-frames.cjs', 'qa.cjs', 'tts-win.ps1', 'out', 'work', 'tools']) {
       assert.ok(fs.existsSync(path.join(project, rel)), '骨架缺少：' + rel)
     }
     assert.ok(fs.existsSync(path.join(project, 'vendor', 'katex', 'katex.min.js')))
@@ -88,6 +88,28 @@ test('scaffold 生成骨架，plan 只打印预估时间轴', async () => {
     assert.ok(plan.stdout.includes('预估时间轴'))
     assert.ok(plan.stdout.includes('30fps'))
     assert.ok(!plan.stdout.includes('chromium'), 'plan 不应启动浏览器')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('qa --static 在干净骨架上通过，缺项目时按 script.json 报错', async () => {
+  const root = makeWorkRoot()
+  try {
+    const project = path.join(root, 'proj')
+    await h5video(['scaffold', project], root)
+    const pass = await h5video(['qa', project, '--static'], root)
+    assert.equal(pass.code, 0, pass.stdout + pass.stderr)
+    assert.ok(pass.stdout.includes('公式与排版'))
+    assert.ok(pass.stdout.includes('出片前体检汇总'))
+    const report = JSON.parse(fs.readFileSync(path.join(project, 'work', 'qa', 'report.json'), 'utf8'))
+    assert.equal(report.ok, true)
+    assert.equal(report.staticOnly, true)
+    assert.equal(report.katex.ok, true)
+
+    const missing = await h5video(['qa', path.join(root, 'nowhere')], root)
+    assert.equal(missing.code, 1)
+    assert.ok(missing.stderr.includes('script.json'))
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

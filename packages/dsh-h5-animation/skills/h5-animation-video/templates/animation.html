@@ -24,10 +24,13 @@
 /* ===========================================================================
  * H5 动画模板  ——  把这个文件当成一块画布
  *
- * 契约（构建脚本靠这三样东西驱动，别删）：
- *   window.__VM       时间轴，由 build.mjs / storyboard.cjs 注入
+ * 契约（构建脚本靠这几样东西驱动，别删）：
+ *   window.__VM       时间轴，由 build.mjs / storyboard.cjs / qa 注入
  *   window.__seek(t)  把画面确定性渲染到第 t 秒并停掉 rAF（供逐帧截图）
  *   window.__ready    渲染函数就绪标志
+ *   window.__MATH     已声明的公式列表（qa-katex.cjs 逐条校验 tex）
+ *   window.__SCENES   实际注册的场景 id（qa 用来和 script.json 对账）
+ *   window.__FADE     交叉淡入时长（秒），转场抽帧用
  *
  * 两层结构：
  *   下层 <canvas>  画图形（轨迹、矢量、曲线、卡片……）
@@ -332,6 +335,10 @@
   document.getElementById('replay').addEventListener('click', play);
   window.__play = play;
   window.__meta = { total: TOTAL, segments: SEG };
+  // 体检脚本（qa-katex.cjs / qa-frames.cjs）只读出口，用于核对公式与画面，别删：
+  window.__MATH = MATH;
+  window.__SCENES = Object.keys(SCENES);
+  window.__FADE = FADE;
   window.__ready = true;
   render(0);
   play();

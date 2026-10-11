@@ -12,7 +12,7 @@ fi
 
 mkdir -p "$DST/tools" "$DST/out" "$DST/work"
 
-for f in animation.html build.mjs storyboard.cjs script.json qa-tts-audio.cjs tts-win.ps1; do
+for f in animation.html build.mjs storyboard.cjs script.json qa-tts-audio.cjs qa-katex.cjs qa-frames.cjs qa.cjs tts-win.ps1; do
   if [ -f "$DST/$f" ]; then
     echo "跳过已存在: $f"
   else
@@ -36,8 +36,9 @@ for t in ffmpeg ffprobe; do
 done
 
 echo "已创建项目: $DST"
-echo "两阶段流程:"
-echo "  第一阶段  1) 编辑 $DST/script.json 写旁白"
-echo "            2) 编辑 $DST/animation.html 写画面"
-echo "            3) cd $DST && node storyboard.cjs   # 出分镜，交人工审核"
-echo "  第二阶段  4) 审核通过后: node build.mjs --approved"
+echo "流程:"
+echo "  阶段二  1) 编辑 $DST/script.json 写旁白"
+echo "          2) 编辑 $DST/animation.html 写画面"
+echo "          3) cd $DST && node qa.cjs          # 公式与画面体检（出片闸门）"
+echo "          4) cd $DST && node storyboard.cjs  # 出分镜，交人工审核"
+echo "  阶段三  5) 审核通过后: node build.mjs --approved"

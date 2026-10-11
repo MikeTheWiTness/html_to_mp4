@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 // H5 动画 -> MP4（含旁白）
 //   1. say 合成中文旁白      2. ffprobe 量时长      3. 用语音时长反推画面时长
 //   4. 无头 Chromium 逐帧定格截图                  5. ffmpeg 编码 H.264 + 混流
-// 用法：node build.mjs --approved [--reuse-tts]
+// 用法：node build.mjs --approved [--reuse-tts] [--keep-frames] [--skip-qa]
 //
 // 这是【第二阶段】。第一阶段先用 node storyboard.cjs 出分镜、把 animation.html 交给
 // 人审核；没有 --approved 就拒绝出片，避免一步到位、画面未经确认就生成视频。
@@ -51,6 +51,27 @@ const cfg = JSON.parse(await fs.readFile(path.join(PROJECT, 'script.json'), 'utf
 const WORK = path.join(PROJECT, 'work');
 const FRAMES = path.join(WORK, 'frames');
 const OUT = path.join(PROJECT, 'out');
+
+// 0. 出片前的画面体检闸门：阶段二/三固定先跑 node qa.cjs，
+//    要求 work/qa/report.json 存在且 ok。要看未经体检的旧画面时才显式 --skip-qa。
+if (!process.argv.includes('--skip-qa')) {
+  let qaReport = null;
+  try { qaReport = JSON.parse(fsSync.readFileSync(path.join(WORK, 'qa', 'report.json'), 'utf8')); } catch (e) { /* 没跑过 qa */ }
+  if (!qaReport || qaReport.ok !== true) {
+    console.error([
+      '',
+      '尚未通过画面体检，已停止。',
+      '',
+      '  先执行：node qa.cjs        # 公式与排版 + 抽帧画面体检，产物在 work/qa/',
+      '  按报告修掉 error 再出片；确实要跳过就显式加 --skip-qa。',
+      ''
+    ].join(NL));
+    process.exit(2);
+  }
+  log('画面体检  ', 'work/qa/report.json ok');
+} else {
+  log('画面体检  ', '已用 --skip-qa 跳过（成片未经 qa 核查，风险自负）');
+}
 
 function firstExisting(list) {
   for (const p of list) { if (p && fsSync.existsSync(p)) return p; }

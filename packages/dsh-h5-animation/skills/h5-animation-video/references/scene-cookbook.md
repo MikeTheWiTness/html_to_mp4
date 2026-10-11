@@ -44,6 +44,8 @@ function bg(t) {
 
 白底视频里**不要加色块/光斑**：径向渐变在近白区间会产生肉眼可见的边界。动态感交给内容本身。
 
+色板（直接用这套，别自创）：底 `#ffffff` · 网格 `rgba(100,116,139,0.10)` · 主墨 `#0f172a` · 次墨 `#334155` · 弱文本 `#64748b` · 强调蓝 `#2563eb`（浅 `#60a5fa` / 深 `#1d4ed8`）· 暖橙 `#f97316` · 琥珀 `#f59e0b` · 绿 `#16a34a` · 红 `#dc2626`。卡片 = 白底 `rgba(255,255,255,0.95)` + 细描边 `rgba(15,23,42,0.12)` + 柔和投影 `rgba(15,23,42,0.10)`，圆角 18。
+
 ## 2. 公式面板
 
 ~~~js
@@ -270,6 +272,7 @@ function syncMath(idx, lt, prevIdx) {
 - 中文不要写进 tex：KaTeX 字体没有中文字形，`F_{\text{向心}}` 会掉到 fallback 字体，很丑。中文说明留在 canvas 上。
 - `\dfrac` 会明显变高，面板要预留约 70px；挤不下就换 `\frac`（自动用脚本号字）。
 - 截图工具必须 `await document.fonts.ready`，否则第一帧可能落在 fallback 字体上。
+- 写完公式跑 `node qa-katex.cjs` 自检：它会找出 canvas 拼字符、tex 解析失败、tex 里的中文，并与 `script.json` 的段 id 对账（见 [pipeline.md](pipeline.md) 第 5.1 节）。
 
 重建内联字体的 CSS（升级 KaTeX 时）：
 

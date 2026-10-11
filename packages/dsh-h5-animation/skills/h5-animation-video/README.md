@@ -10,6 +10,7 @@
 - DSH 插件包：[packages/dsh-h5-animation/](packages/dsh-h5-animation/) —— 把本 skill 挂成可插拔的 agent preset（「H5 动画视频」），并注册 `h5video` 确定性工具
 - 视觉基线：**纯白底 + 深墨字 + 单一强调色（蓝 #2563eb / 暖橙 #f97316）**，见 [SKILL.md](SKILL.md) 的画面设计规范
 - 公式排版：物理量与公式一律走 **LaTeX（KaTeX）**，真分数、带横线的根号、上下标、希腊字母都是真排版；KaTeX 随包在 `templates/vendor/katex/`（字体已内联，离线可用）
+- 出片前体检：`node qa.cjs` 自动核查「公式是否都走 KaTeX」与「抽帧有没有压字/重叠/出界/缺内容/不确定」，报告在 `work/qa/`
 
 ## 核心思路
 
@@ -31,8 +32,8 @@
 | 阶段 | 命令/动作 | 产出 | 交付对象 |
 | --- | --- | --- | --- |
 | 一 · 设计 | 编写 `design.md` | 课程范围、场景顺序、旁白与时长的详细方案 | 交用户确认；确认前不生成 HTML |
-| 二 · HTML | `node storyboard.cjs` | `animation.html` + 分镜图 + 语音预览 | 交用户审核；明确确认后才出片 |
-| 三 · 出片 | `node build.mjs --approved` | `out/*.mp4` | 最终交付 |
+| 二 · HTML | `node qa.cjs` + `node storyboard.cjs` | `animation.html` + 分镜图 + 体检报告 + 语音预览 | 交用户审核；明确确认后才出片 |
+| 三 · 出片 | `node build.mjs --approved` | `out/*.mp4` | 最终交付（默认要求 qa 通过，`--skip-qa` 例外） |
 
 
 ## 快速开始
@@ -45,6 +46,7 @@ cd ~/我的视频项目
 # 方案确认后进入阶段二
 # 2) 改 script.json 的旁白、改 animation.html 的画面
 node storyboard.cjs --plan     # 先看预估节奏
+node qa.cjs                    # 公式与画面体检（出片闸门），报告在 work/qa/
 node storyboard.cjs            # 出分镜图，交审核，按反馈迭代
 # HTML、分镜和语音明确通过后进入阶段三
 node build.mjs --approved      # 只改了画面时加 --reuse-tts，跳过重新配音
@@ -72,6 +74,7 @@ h5video check-env --json     # 轻量体检：ffmpeg / ffprobe / say / Chromium
 h5video scaffold 我的视频项目  # 生成项目骨架（不覆盖已有文件）
 h5video plan 我的视频项目      # 只打印预估时间轴
 h5video storyboard 我的视频项目            # 阶段二：出分镜
+h5video qa 我的视频项目                    # 公式与画面体检（出片闸门）
 h5video build 我的视频项目 --approved      # 阶段三：出片
 h5video probe 我的视频项目/out/video.mp4   # 出片校验
 ~~~

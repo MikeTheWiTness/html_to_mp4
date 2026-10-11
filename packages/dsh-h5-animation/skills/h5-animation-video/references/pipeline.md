@@ -96,12 +96,16 @@ arch -arm64 /opt/homebrew/bin/brew install ffmpeg
 
 ## 4. animation.html 接口契约
 
-页面必须暴露三样东西，构建脚本靠它们驱动：
+页面必须暴露这些出口，构建与体检脚本靠它们驱动：
 
 ~~~js
 window.__VM = { fps: 30, segments: [{ id: 'title', start: 0, dur: 5 }, ...] };  // 由 addInitScript 注入
 window.__seek = function (t) { /* 把画面确定性渲染到第 t 秒，并停掉 rAF */ };
 window.__ready = true;                                                          // 渲染函数就绪
+// qa-katex.cjs / qa-frames.cjs 用来核对的只读出口（模板已提供）：
+window.__MATH = MATH;                    // 已声明的公式列表（id / seg / tex）
+window.__SCENES = Object.keys(SCENES);   // 实际注册的场景 id，用于和 script.json 对账
+window.__FADE = FADE;                    // 交叉淡入时长（秒），转场抽帧用
 ~~~
 
 约定：
@@ -132,9 +136,36 @@ node storyboard.cjs --plan         # 只打印预估时间轴（不开浏览器�
 
 审核时把**分镜图**、**animation.html**和语音预览一起交给对方。收到明确同意后才进阶段三。
 
+### 5.1 出片前体检（qa.cjs / qa-katex.cjs / qa-frames.cjs）
+
+分镜是给人看的，体检是给机器看的：能自动判定的错先让脚本判掉。三个脚本都可单独运行，支持 `--strict`（warn 也算失败）与 `--json`。
+
+~~~bash
+node qa.cjs                # 汇总入口：依次跑下面两个，产出 work/qa/report.json
+node qa.cjs --static       # 没有浏览器时只跑 qa-katex 的静态部分
+node qa-katex.cjs          # 公式与排版：canvas 拼字符、tex 解析/中文、场景 id 对账、字体就绪
+node qa-frames.cjs         # 画面：抽关键帧/中间帧/转场帧，逐帧查压字重叠出界缺内容与确定性
+node qa-frames.cjs --real  # 用 work/timeline.json 的真实时间轴复检（出片后）
+~~~
+
+判据（error 必须修，warn 逐条判断）：
+
+| 脚本 | code（error） | 含义 |
+| --- | --- | --- |
+| qa-katex | `canvas-latex` / `canvas-supsub-unicode` / `canvas-caret` / `canvas-underscore` / `canvas-sqrt` | canvas 文本里拼了公式 |
+| qa-katex | `tex-cjk` | tex 里写了中文（KaTeX 无中文字形） |
+| qa-katex | `tex-parse-error` / `katex-error-node` | 公式解析失败 |
+| qa-katex | `scene-missing` / `math-seg-unknown` | 段 id / 公式的 seg 对不上 SCENES |
+| qa-frames | `text-outside`（几乎完全出界）/ `math-over-text` / `math-overlap` / `blank-frame` | 压字、重叠、缺内容 |
+| qa-frames | `nondeterministic` / `raf-not-stopped` | 画面不是 t 的纯函数，或 `__seek` 后还在动 |
+
+产物：`work/qa/katex.json`、`work/qa/frames.json`、`work/qa/report.json`（汇总，`build.mjs` 读它）、`work/qa/frames/`（干净抽帧）、`work/qa/flagged/`（红框标注）。
+
+`build.mjs --approved` 默认要求 `work/qa/report.json.ok === true`，否则 `exit 2`；确实要跳过用 `--skip-qa`。
+
 ## 6. build.mjs 每步在做什么（阶段三）
 
-**闸门**：没有 `--approved` 会打印提示并 `exit 2`。这是刻意设计的——设计方案和 HTML/分镜未经人工确认就不该花算力编码。
+**闸门**：没有 `--approved` 会打印提示并 `exit 2`；有 `--approved` 但 `work/qa/report.json` 缺失或 `ok !== true` 同样 `exit 2`（`--skip-qa` 可显式跳过）。这是刻意设计的——设计方案和 HTML/分镜未经人工确认、画面未经体检就不该花算力编码。
 
 1. **TTS**：`say -v Tingting -r 178 -o work/segN.aiff "<文本>"`。
 2. **量时长**：`ffprobe -show_entries format=duration -of default=nw=1:nk=1`（比正则解析 `ffmpeg -i` 的 stderr 稳）。
@@ -218,7 +249,8 @@ h5video check-env --json            # 环境体检（ffmpeg / ffprobe / say / Ch
 h5video scaffold <目录>              # 从随包 templates 生成项目骨架，不覆盖已有文件
 h5video plan <项目>                  # 只打印预估时间轴
 h5video storyboard <项目>            # 阶段二：出分镜图，交人审核
-h5video build <项目> --approved      # 阶段三：出片（没有 --approved 由脚本 exit 2 拦下）
+h5video qa <项目> [--static]         # 公式与画面体检，产出 work/qa/report.json
+h5video build <项目> --approved      # 阶段三：出片（没有 --approved 或 qa 未通过由脚本 exit 2 拦下）
 h5video probe <成品.mp4>             # 出片校验：ffprobe JSON，看 h264 + aac 两路流
 h5video voices                     # say 音色列表（默认只看中文）
 ~~~
@@ -316,3 +348,8 @@ node build.mjs --approved --reuse-tts
 | `Bad CPU type in executable`（ffmpeg/ffprobe 起不来） | 二进制架构与机器不匹配（arm64 机器上是 x86_64 的 ffprobe，又没装 Rosetta） | `h5video check-env` 看候选清单；换对应架构的静态版，或 `npm i ffprobe-static` |
 | 插件包会话里 `h5video` 报找不到 node | 宿主进程的 PATH 没有 node（fnm/nvm 通常只在交互 shell 生效） | 在 profile patch 的 `h5video-tools` 行写 `nodePath: /绝对路径/bin/node`；或直接用 bash 跑脚本 |
 | 视频在某些播放器无声 | AAC 采样率/声道异常 | 统一 `-ar 44100 -ac 2` |
+| 成片语音一顿一顿 / 卡顿 | 用了 eloquence 类中文音色（say -v "?" 里的「X (中文（中国大陆）)」），每约 1.7 s 丢约 300 ms | 换 compact 音色 Tingting / Meijia；`node qa-tts-audio.cjs work/seg*.aiff` 复检，hardCuts 必须为 0 |
+| `Unknown encoder "libx264"` | 用了 Playwright 自带的 ffmpeg-mac（只有 VP8/WebM） | 换 tools/ffmpeg 静态版 |
+| `say` 没有声音 | 音色名不对 | `say -v ?` 列出全部音色，填进 script.json 的 voice |
+| 逐帧结果抖动、不一致 | 绘制里用了随机数或累积状态 | 改成由 t 派生的确定性伪随机，并跑 `node qa.cjs` 的确定性检查 |
+| 写文件被沙箱拒绝 | 在会话工作区之外操作 | 把项目建在工作区内，或申请更宽权限 |
