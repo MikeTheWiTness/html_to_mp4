@@ -5,7 +5,7 @@ description: Produce a narrated MP4 from a self-contained HTML/CSS/Canvas animat
 
 # H5 动画 → MP4（含旁白）
 
-把一段网页动画变成可播放的视频，画面、公式与旁白天然同步。先审设计，再审 HTML，最后出片；全程离线，不依赖云 TTS。
+把一段网页动画变成可播放的视频，画面、公式与旁白天然同步。先审设计，再审 HTML，最后出片；旁白可用本地 TTS，或在用户配置凭据且预检通过后使用 Fish Audio 云端 TTS。
 
 ## 阶段零：环境自检（开工前先做，缺件先问用户要不要装）
 
@@ -52,6 +52,16 @@ h5video doctor --fix --yes  # 真的下载安装，装完自动复检
 ## 阶段二旁白要求
 
 旁白不是阶段三才添加的附件。第二阶段就要在 `animation.html` 预览里提供逐段讲解语音：浏览器用 Web Speech API（`speechSynthesis`，优先 `lang` 为 `zh-CN`/`zh` 的系统音色），按 `script.json` 顺序逐段朗读、讲完停止，并用明确的播放/重播控件启动；标明这是预览音色，分镜仍可静音截图。最终 MP4 由 `script.json` 的 TTS 音色合成，阶段三必须用实测语音时长重算时间轴，不得硬塞预估时长；保留 `script.json`、分段音频与 `work/timeline.json`，让审核、换音色、重出片基于同一套文案。
+
+## 阶段三云端旁白：Fish Audio
+
+用户选择 Fish Audio 时，默认使用项目指定音色 ID `71d8d0bb20f04903b3114266575a1afc`，同一视频所有段落共用该 Voice ID。模型为 `s2.1-pro-free`，请求细节见 [references/pipeline.md](references/pipeline.md) 的 Fish Audio 小节。
+
+- **批量生成前必须先做一次短句 TTS 预检**：用相同 API Key、模型、Voice ID 与请求参数生成独立 MP3，等完整响应结束，确认 HTTP 成功、音频非空且 `ffprobe` 可解码；试听确认音色后才生成各段旁白。预检失败就停止，不批量请求、不静默切换本地音色。
+- API Key 只从 `FISH_AUDIO_API_KEY` 环境变量或用户指定的受保护本地配置读取；缺少凭据时先请用户配置。不得在聊天、日志、源代码或 Git 中输出/保存密钥。
+- 每段旁白单独请求并保存 MP3，保持 `script.json` 顺序和一套统一旁白配置。请求正文使用清理后的文本；请求与下载完整音频的总时限为 90 秒。
+- 首选 `https://api.fish.audio/v1/tts`；仅在网络连接异常时切换至 `https://47.82.118.10.sslip.io/txq/zf/in`。HTTP 错误、空音频和本地超时直接报错，不重试到中转。
+- build 脚本的 `--reuse-tts` 读取 `work/segN.aiff`。保留 Fish 返回的 MP3，并逐段转成对应 AIFF 后再运行已获批准的 `node build.mjs --approved --reuse-tts`；由 build 实测段长并重算时间轴，不能沿用旧时间轴。
 
 **后续换音色**：直接替换 MP4 音轨只适合新旧旁白总时长、停顿和语句起点基本一致的情况；音色/语速一变就会错位或被截断/补静音。标准做法是用保留文案重新合成、实测每段时长、重算 `timeline.json` 并重混；只换音频也要按新时间轴重建视频时长。不要把"可替换音轨"说成任意音色无损一键替换。
 

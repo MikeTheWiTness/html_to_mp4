@@ -16,3 +16,6 @@ outputs/
 # 临时验证目录
 .tmp-*/
 .h5video-*/
+
+# Local Fish Audio credentials; never commit API keys
+projects/运动图像关系/work/fish-audio-credentials.local.env

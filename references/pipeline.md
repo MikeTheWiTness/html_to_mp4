@@ -94,6 +94,46 @@ arch -arm64 /opt/homebrew/bin/brew install ffmpeg
 | segments[].id | — | 必须等于 animation.html 里 SCENES 的键 |
 | segments[].text | — | 旁白文本，一段一句 |
 
+### 3.1 Fish Audio 云端 TTS
+
+用户指定 Fish Audio 时，批量生成前先用一条短句做真实预检。预检必须使用将用于正式生成的 API Key、模型、Voice ID 和参数；等音频完整接收后确认 HTTP 成功、非空、`ffprobe` 可解码，并试听音色。预检失败则停止，不发起整片请求、不切换成其它音色。
+
+- 默认模型：`s2.1-pro-free`
+- 本项目默认 Voice ID：`71d8d0bb20f04903b3114266575a1afc`。一支视频所有段共用同一 Voice ID；用户明确选择其他音色时才替换。
+- Key 从 `FISH_AUDIO_API_KEY` 环境变量或用户指定的受保护本地凭据读取。缺失时先请用户配置；不可把 Key 放进聊天、日志、源文件或版本库。
+- 每段单独请求，保留文案顺序和逐段音频；输出格式用 MP3。发送前清理音标，并按项目旁白规则把英文词性缩写转成中文。
+
+主端点 `POST https://api.fish.audio/v1/tts` 的请求头：
+
+~~~http
+Content-Type: application/json
+Authorization: Bearer <FISH_AUDIO_API_KEY>
+model: s2.1-pro-free
+x-user-id: Q29kZXg=
+~~~
+
+请求体：
+
+~~~json
+{
+  "text": "需要朗读的文本",
+  "reference_id": "71d8d0bb20f04903b3114266575a1afc",
+  "format": "mp3",
+  "normalize": true,
+  "latency": "normal",
+  "temperature": 0.35,
+  "top_p": 0.7,
+  "repetition_penalty": 1.2,
+  "chunk_length": 300,
+  "condition_on_previous_chunks": true,
+  "prosody": { "speed": 0.96, "volume": 0 }
+}
+~~~
+
+完整请求（含接收音频 body）最多 90 秒。仅网络连接异常时，改发 `POST https://47.82.118.10.sslip.io/txq/zf/in`；HTTP 非成功、空响应或本地超时必须直接失败，不得转中转重发。成功后检查 MP3 非空并用 `ffprobe` 确认可解码、读取实测时长。
+
+build.mjs 的 `--reuse-tts` 只复用 `work/segN.aiff`。保留源 MP3，再逐段转码到对应 AIFF（例如 `ffmpeg -y -i work/fish-audio/seg0.mp3 -ar 44100 -ac 2 -c:a pcm_s16be work/seg0.aiff`），按每个 `script.json` 段的索引对应命名；之后只在已有阶段审核通过时运行 `node build.mjs --approved --reuse-tts`。build 会量取每段真实时长并重建时间轴，不要手动沿用旧 timeline。
+
 ## 4. animation.html 接口契约
 
 页面必须暴露这些出口，构建与体检脚本靠它们驱动：
